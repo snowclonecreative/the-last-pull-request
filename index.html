@@ -1,0 +1,1544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>The Last Pull Request</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="An interactive code review in civilization/production, October 2046.">
+<style id="app-style">
+/* Layout: a code-review product shell — repo header, sticky PR bar, thread column (~70ch) + narrow activity column, compact fixed playback bar. Single deliberate dark look per brief. */
+:root {
+  --bg: #0A101B;
+  --panel: #111A28;
+  --panel-2: #0D1521;
+  --border: #293548;
+  --text: #E6EDF3;
+  --muted: #8996AA;
+  --mara: #C7B6F0;
+  --mara-tint: #1A1830;
+  --system: #7FB0EE;
+  --system-tint: #12213A;
+  --add: #5CC98C;
+  --add-tint: #0F2A1F;
+  --reject: #E3918B;
+  --reject-tint: #2C1618;
+  --pending: #D8B96E;
+  --pending-tint: #2A2414;
+  --focus: #A8CBFF;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --bar-h: 96px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); margin: 0; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--panel-2); }
+button, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+code { font-family: var(--mono); font-size: .9em; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: .05em .35em; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; font-size: 14px; line-height: 1.2; }
+.btn:hover:not(:disabled) { background: #17223A; border-color: #3A4A63; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: #1D3A66; border-color: #3A64A0; font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: #24477C; }
+.btn-quiet { background: transparent; }
+.mono { font-family: var(--mono); }
+.muted { color: var(--muted); }
+
+/* Repo header */
+.shell { max-width: 1200px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.topbar { background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.topbar .shell { display: flex; align-items: center; gap: 12px; padding-block: 10px; flex-wrap: wrap; }
+.repo-name { font-family: var(--mono); font-size: 15px; }
+.repo-name b { font-weight: 600; }
+.repo-vis { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--muted); }
+.topbar .spacer { flex: 1; }
+.topbar .btn { min-height: 36px; font-size: 13px; }
+
+.prhead { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--bg); border-bottom: 1px solid var(--border); }
+.prhead .shell { padding-block: 10px; display: grid; gap: 6px; }
+.prtabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.prtab { min-height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; cursor: pointer; font-size: 13px; font-family: var(--mono); color: var(--muted); }
+.prtab[aria-selected="true"] { color: var(--text); background: var(--panel); border-color: #3A4A63; }
+.prtitle { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 600; text-wrap: balance; }
+.prtitle .num { color: var(--muted); font-weight: 400; }
+.prmeta { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; color: var(--muted); }
+.prmeta .refs code { font-size: 12px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font: 600 12px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 6px 10px; border-radius: 999px; border: 1px solid; }
+.badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.badge.open { color: var(--add); background: var(--add-tint); border-color: #245C40; }
+.badge.held { color: var(--pending); background: var(--pending-tint); border-color: #5E4E25; }
+.badge.rejected { color: var(--reject); background: var(--reject-tint); border-color: #6A3434; }
+.badge.pending { color: var(--pending); background: var(--pending-tint); border-color: #5E4E25; }
+.storytime { font-family: var(--mono); font-size: 12px; }
+.mini-activity { display: none; }
+
+/* Main grid */
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px; padding-block: 24px calc(var(--bar-h) + 40px); }
+.thread { min-width: 0; max-width: 760px; display: flex; flex-direction: column; }
+.readonly-note { font-size: 13px; color: var(--muted); border: 1px dashed var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; }
+.ev { scroll-margin-top: 140px; scroll-margin-bottom: calc(var(--bar-h) + 24px); }
+.ev:focus { outline: none; }
+.ev:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 6px; }
+.ev + .ev { margin-top: 14px; }
+.ev.cont-ev { margin-top: 0; }
+
+.story-title { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 4px; }
+.date { margin: 6px 0 10px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.date em { font-style: normal; }
+.date::before { content: "◷ "; }
+hr.rule { border: 0; border-top: 1px solid var(--border); margin: 26px 0 18px; }
+.sec-h { font-size: 15px; font-weight: 600; margin: 0 0 10px; color: var(--text); letter-spacing: .01em; }
+.sec-h.h1 { font-size: 13px; }
+
+.card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow: hidden; }
+.card-h { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.card-h p { margin: 0; }
+.speaker { font-family: var(--mono); font-size: 13px; letter-spacing: .04em; }
+.speaker strong { font-weight: 600; }
+.card.mara .card-h { background: var(--mara-tint); }
+.card.mara .speaker { color: var(--mara); }
+.card.system .card-h, .card.notice .card-h { background: var(--system-tint); }
+.card.system .speaker, .card.notice .speaker { color: var(--system); }
+.role { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; font-family: var(--mono); }
+.card-b { padding: 12px 16px; max-width: 72ch; }
+.card-b > * { margin: 0; }
+.card-b > * + * { margin-top: .85em; }
+.card-b p { font-size: 16.5px; }
+.card.cont { border-top-left-radius: 0; border-top-right-radius: 0; border-top: 1px dashed #34435A; margin-top: -1px; }
+.card.prev-cont { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.card.description .card-b p { color: var(--text); }
+.card.report { border-color: #4A3439; }
+.card.report .card-b p { font-family: var(--mono); font-size: 14px; }
+.card.notice { border-color: #2D4466; }
+.card.notice .card-b p { font-size: 15.5px; }
+.card ul { padding-left: 1.3em; }
+.card li + li { margin-top: 4px; }
+
+.pr-record .card-b { font-family: var(--mono); font-size: 13px; color: var(--muted); max-width: none; }
+.pr-record .card-b strong { color: var(--text); font-weight: 600; }
+.pr-record .card-b code { color: var(--text); }
+
+.diff { margin: 0; overflow-x: auto; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font: 14px/1.6 var(--mono); }
+.diff .dh { font-size: 12px; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--border); font-family: var(--mono); }
+.diff code { display: block; background: none; border: 0; padding: 8px 0; font-size: 14px; border-radius: 0; }
+.diff .ln { display: block; padding: 0 14px; white-space: pre; }
+.diff .ln.add { background: var(--add-tint); color: #B8F0CF; }
+.diff .ln.add .mk { color: var(--add); }
+.card-b .diff { margin-top: 0; }
+.code-ev .card-b { padding-top: 12px; }
+p.inline-code code { font-size: 15px; color: #B8F0CF; background: var(--add-tint); border-color: #245C40; }
+
+.status-ev { display: flex; }
+.status-line { display: inline-flex; align-items: center; gap: 10px; margin: 0; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); font-family: var(--mono); font-size: 14px; }
+.status-line.rejected { border-color: #6A3434; background: var(--reject-tint); color: var(--reject); }
+.status-line.pending { border-color: #5E4E25; background: var(--pending-tint); color: var(--pending); }
+.status-line.neutral { color: var(--text); }
+.status-line .tag { font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+
+.coda { margin: 0; font-size: 19px; line-height: 1.7; max-width: 60ch; color: #D6DEE8; }
+.ev-coda + .ev-coda { margin-top: 14px; }
+.ev-coda:first-of-type { margin-top: 30px; }
+
+.ui-card { border: 1px dashed #3A4A63; border-radius: 8px; background: var(--panel-2); padding: 12px 14px; display: grid; gap: 8px; }
+.ui-card .file { font-family: var(--mono); font-size: 13px; }
+.ui-card p { margin: 0; font-size: 14px; color: var(--muted); max-width: 68ch; }
+.ui-card .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.attach { border-top: 1px solid var(--border); padding: 8px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.attach .btn { min-height: 36px; font-size: 13px; }
+
+.reveal { animation: rise .28s ease-out both; }
+@keyframes rise { from { transform: translateY(6px); } to { transform: none; } }
+
+.typing { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; font-family: var(--mono); margin-top: 14px; min-height: 22px; }
+.typing .dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); margin-right: 3px; animation: blink 1.2s infinite both; }
+.typing .dots span:nth-child(2) { animation-delay: .2s; }
+.typing .dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+/* Activity column */
+.activity { min-width: 0; }
+.activity > details { max-height: calc(100vh - 170px - var(--bar-h)); overflow: auto; }
+.activity details { position: sticky; top: 150px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.activity summary { list-style: none; cursor: pointer; padding: 10px 14px; font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; min-height: 44px; border-bottom: 1px solid var(--border); }
+.activity summary::-webkit-details-marker { display: none; }
+.activity summary .sum { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.act-body { padding: 4px 14px 14px; display: grid; gap: 14px; }
+.stats { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 0; font-size: 13px; }
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.stats .changed { color: var(--add); }
+.act-h { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 6px 0 0; font-weight: 600; }
+.arch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.arch-list button { width: 100%; text-align: left; min-height: 40px; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 6px 8px; font: 12.5px/1.35 var(--mono); cursor: pointer; color: var(--system); overflow-wrap: anywhere; }
+.arch-list button:hover { background: var(--panel-2); border-color: var(--border); }
+.arch-list .lock { color: var(--muted); }
+.samples summary { font-size: 13px; cursor: pointer; min-height: 36px; display: flex; align-items: center; }
+.samples .diff { margin-top: 8px; font-size: 13px; }
+.act-note { font-size: 12px; color: var(--muted); margin: 0; }
+.flag { font-size: 12px; font-family: var(--mono); color: var(--pending); }
+
+/* Playback bar */
+.playbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; background: rgba(13,21,33,.97); border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.playbar .shell { padding-block: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.prhead .shell { grid-template-columns: minmax(0, 1fr); }
+.progress-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.progress-row .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.bar-status { display: none; white-space: nowrap; }
+.bar-status.rejected { color: var(--reject); }
+.bar-status.held, .bar-status.pending { color: var(--pending); }
+.bar-status.open { color: var(--add); }
+.prog { flex: 1 1 auto; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; min-width: 40px; }
+.prog > div { height: 100%; background: var(--system); width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.controls .grow { flex: 1; }
+.speed { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.speed select { min-height: 44px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; color: var(--text); }
+.jump { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(var(--bar-h) + 12px); z-index: 24; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+
+/* Dialogs */
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 0; width: min(760px, calc(100% - 24px)); max-height: calc(100% - 32px); overflow: auto; }
+dialog::backdrop { background: rgba(3,6,12,.72); }
+.dlg-h { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.dlg-h h2 { margin: 0; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dlg-b { padding: 14px 16px 18px; }
+.dlg-b > * { margin-top: 0; }
+
+.transcript { max-width: 72ch; }
+.transcript h2.t1 { font-size: 22px; }
+.transcript h3 { font-size: 16px; margin: 1.6em 0 .6em; }
+.transcript p { margin: 0 0 .8em; }
+.transcript .t-speaker { font-family: var(--mono); font-size: 13px; margin-top: 1.1em; }
+.transcript hr { border: 0; border-top: 1px solid var(--border); margin: 1.6em 0; }
+.transcript .diff { margin: 0 0 .8em; }
+
+.viewer { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
+.viewer nav ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.viewer nav button { width: 100%; text-align: left; min-height: 40px; border-radius: 6px; border: 1px solid transparent; background: transparent; padding: 6px 8px; font: 12.5px/1.35 var(--mono); color: var(--system); cursor: pointer; overflow-wrap: anywhere; }
+.viewer nav button[aria-current="true"] { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+.viewer nav button.lock { color: var(--muted); }
+.doc { min-width: 0; font-size: 14px; }
+.doc h3 { font: 600 14px var(--mono); margin: 0 0 10px; }
+.doc dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0 0 12px; }
+.doc dt { color: var(--muted); }
+.doc dd { margin: 0; }
+.doc .ro { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-bottom: 10px; }
+.sealed { border: 1px dashed var(--border); border-radius: 6px; padding: 14px; color: var(--muted); font-family: var(--mono); font-size: 13px; }
+
+/* Archived game: an old program window */
+.oldwin { background: #C9C3B6; color: #15171C; border: 0; width: min(700px, calc(100% - 16px)); }
+.oldwin .dlg-h { background: #2E3A57; color: #F1EEE6; border-bottom: 2px solid #15171C; }
+.oldwin .dlg-h h2 { font: 600 13px var(--mono); }
+.oldwin .dlg-h .btn { background: #C9C3B6; color: #15171C; border: 2px outset #EEE9DE; border-radius: 0; min-height: 34px; font: 13px var(--mono); }
+.oldwin .dlg-b { padding: 10px; display: grid; gap: 8px; }
+.oldwin .btn { background: #DCD7CB; color: #15171C; border: 2px outset #F3EFE6; border-radius: 0; font: 13px var(--mono); }
+.oldwin .btn:hover:not(:disabled) { background: #E8E3D8; border-color: #F3EFE6; }
+.oldwin .btn[aria-pressed="true"] { border-style: inset; background: #BDB7A9; }
+.oldwin :focus-visible { outline: 2px solid #1D3A8A; outline-offset: 1px; }
+.screen { background: #000; border: 2px inset #8E897D; line-height: 0; position: relative; }
+.screen:focus-visible { outline: 3px solid #1D3A8A; outline-offset: 2px; }
+.screen canvas { width: 100%; max-width: 100%; aspect-ratio: 16 / 10; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+.statusbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font: 12px/1.4 var(--mono); border: 2px inset #8E897D; background: #D8D3C7; padding: 4px 8px; min-height: 28px; }
+.statusbar .issue { color: #7A1F12; font-weight: 600; }
+.touch { display: grid; grid-template-columns: repeat(3, 52px) 1fr; grid-template-rows: repeat(2, 48px); gap: 6px; align-items: stretch; touch-action: none; user-select: none; -webkit-user-select: none; }
+.touch .btn { min-height: 44px; padding: 0; touch-action: none; }
+.touch .t-up { grid-column: 2; grid-row: 1; }
+.touch .t-left { grid-column: 1; grid-row: 2; }
+.touch .t-down { grid-column: 2; grid-row: 2; }
+.touch .t-right { grid-column: 3; grid-row: 2; }
+.touch .t-fire { grid-column: 4; grid-row: 1 / span 2; justify-self: end; width: min(140px, 100%); font-weight: 700; }
+.touch .btn.held { border-style: inset; background: #BDB7A9; }
+.game-help { font: 12px/1.5 var(--mono); margin: 0; color: #2B2E36; }
+.game-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Terminal */
+.terminal { position: fixed; inset: 0; z-index: 40; background: #05080E; display: grid; grid-template-rows: 1fr auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.term-main { overflow: auto; padding: 28px max(20px, env(safe-area-inset-right, 0px)) 20px max(20px, env(safe-area-inset-left, 0px)); }
+.term-line { display: flex; gap: 10px; font: 16px/1.6 var(--mono); color: #D9E2EC; max-width: 900px; }
+.term-glyph { color: var(--add); user-select: none; }
+.term-field { position: relative; flex: 1; min-width: 0; }
+.term-mirror, .term-input { font: 16px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; padding: 0; margin: 0; letter-spacing: 0; }
+.term-mirror { pointer-events: none; color: #D9E2EC; min-height: 1.6em; }
+.term-input { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; border: 0; outline: none; background: transparent; color: transparent; caret-color: transparent; overflow: hidden; }
+.term-input::selection { background: #2B4A7A; color: transparent; }
+.term-field:focus-within { outline: none; }
+.cursor { display: inline-block; width: .6em; height: 1.15em; vertical-align: -0.2em; background: #D9E2EC; animation: cur 1.05s steps(1) infinite; }
+.term-field:not(:focus-within) .cursor { background: transparent; box-shadow: inset 0 0 0 1px #8996AA; animation: none; }
+@keyframes cur { 50% { opacity: 0; } }
+.pending { max-width: 900px; margin-top: 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.pending h2 { font: 600 13px var(--mono); margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.pending .diff { border: 0; border-radius: 0; }
+.pending .copy-fallback { width: 100%; min-height: 6em; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: 13px var(--mono); }
+.pending .pend-b { padding: 10px 12px; display: grid; gap: 8px; }
+.term-bar { border-top: 1px solid #1A2232; background: #070B12; }
+.term-bar .shell { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-block: 8px; max-width: none; }
+.term-bar .private { font: 12px var(--mono); color: var(--muted); margin-right: auto; }
+.term-msg { font: 12px var(--mono); color: var(--muted); }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-top: 16px; }
+  .activity details { position: static; }
+  .activity > details { max-height: none; }
+  .prhead { position: static; }
+  .bar-status { display: inline; }
+  .mini-activity { display: inline-flex; }
+  .viewer { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .prtitle { font-size: 18px; }
+  .card-b { padding: 10px 12px; }
+  .card-b p { font-size: 16px; }
+  .controls .lbl-wide { display: none; }
+  .btn { padding: 0 10px; }
+  .coda { font-size: 17px; }
+  .touch { grid-template-columns: repeat(3, 48px) 1fr; }
+}
+@media (max-height: 560px) {
+  .prhead { position: static; }
+  .activity details { position: static; }
+  .controls .lbl-wide { display: none; }
+  .controls { gap: 4px; }
+  .playbar .shell { padding-block: 4px; gap: 2px; }
+  .controls .btn, .speed select { min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; }
+  .typing .dots span { animation: none; opacity: .6; }
+  .cursor { animation: none !important; }
+  html { scroll-behavior: auto; }
+}
+</style>
+<div id="app"></div>
+<template id="app-markup">
+<div class="topbar" role="banner">
+  <div class="shell">
+    <span class="repo-name" id="repo-name"><span class="muted">civilization</span> / <b>production</b></span>
+    <span class="repo-vis">production</span>
+    <span class="spacer"></span>
+    <button class="btn btn-quiet" type="button" id="btn-transcript-top">Transcript</button>
+    <button class="btn btn-quiet" type="button" id="btn-source">Source</button>
+  </div>
+</div>
+
+<div class="prhead" id="prhead">
+  <div class="shell">
+    <div class="prtabs" role="tablist" aria-label="Pull requests" id="prtabs" hidden>
+      <button class="prtab" role="tab" type="button" id="tab-1" aria-controls="thread-1" aria-selected="true">#8,441,092,003</button>
+      <button class="prtab" role="tab" type="button" id="tab-2" aria-controls="thread-2" aria-selected="false">#8,441,092,004</button>
+    </div>
+    <h1 class="prtitle"><span id="pr-title">One small change</span> <span class="num" id="pr-num">#8,441,092,003</span></h1>
+    <div class="prmeta">
+      <span class="badge open" id="pr-status">Open</span>
+      <span><code>mara.chen</code> <span id="pr-verb">wants to merge into</span> <span class="refs" id="pr-refs"><code>main</code> ← <code>mara.chen/objection</code></span></span>
+      <span class="storytime">Story time: <time id="story-time">October 17, 2046</time></span>
+      <button class="btn btn-quiet mini-activity" type="button" id="btn-mini-activity" aria-controls="activity-details"><span id="mini-sum">Activity</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="layout">
+    <main class="thread" id="main" aria-label="Review thread">
+      <h2 class="sr-only" id="thread-heading">Review thread</h2>
+      <p class="readonly-note" id="readonly-note" hidden>Read-only record of the first pull request. Use the tabs above to return to the newest review.</p>
+      <div id="thread-1" role="tabpanel" aria-labelledby="tab-1"></div>
+      <div id="thread-2" role="tabpanel" aria-labelledby="tab-2" hidden></div>
+      <div class="typing" id="typing" aria-hidden="true" hidden><span class="dots"><span></span><span></span><span></span></span> processing review</div>
+    </main>
+
+    <aside class="activity" aria-label="Repository activity">
+      <details id="activity-details" open>
+        <summary>Activity <span class="sum" id="act-sum"></span></summary>
+        <div class="act-body">
+          <dl class="stats" id="stats"></dl>
+          <p class="flag" id="act-flag" hidden></p>
+          <div>
+            <h3 class="act-h">Archive</h3>
+            <ul class="arch-list" id="arch-list"></ul>
+            <p class="act-note" id="arch-empty">Nothing opened from the archive yet.</p>
+          </div>
+          <details class="samples" id="samples" hidden>
+            <summary>Fork samples (3 diffs)</summary>
+            <div id="samples-body"></div>
+          </details>
+        </div>
+      </details>
+    </aside>
+  </div>
+</div>
+
+<button class="btn btn-primary jump" type="button" id="btn-jump" hidden>Jump to latest ↓</button>
+
+<div class="playbar" id="playbar" role="region" aria-label="Story playback">
+  <div class="shell">
+    <div class="progress-row">
+      <span class="bar-status open" id="bar-status">Open</span>
+      <span class="where" id="where">Opening</span>
+      <div class="prog" role="progressbar" aria-label="Story progress" id="progbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="progfill"></div></div>
+      <span id="progtxt">0 / 0</span>
+    </div>
+    <div class="controls">
+      <button class="btn btn-primary" type="button" id="btn-start">Start review</button>
+      <button class="btn" type="button" id="btn-prev" aria-label="Previous">◀ <span class="lbl-wide">Previous</span></button>
+      <button class="btn" type="button" id="btn-play" aria-label="Play">▶ <span class="lbl-wide" id="play-lbl">Play</span></button>
+      <button class="btn btn-primary" type="button" id="btn-next" aria-label="Next"><span class="lbl-wide">Next</span> ▶</button>
+      <label class="speed" for="speed"><span class="lbl-wide">Speed</span><span class="sr-only">Playback speed</span>
+        <select id="speed">
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+      <span class="grow"></span>
+      <button class="btn" type="button" id="btn-sections">Sections</button>
+      <button class="btn" type="button" id="btn-transcript">Transcript</button>
+      <button class="btn" type="button" id="btn-restart">Restart</button>
+    </div>
+  </div>
+</div>
+
+<div class="sr-only" role="status" aria-live="polite" id="announcer"></div>
+
+<dialog id="dlg-transcript" aria-labelledby="dlg-transcript-h">
+  <div class="dlg-h"><h2 id="dlg-transcript-h">Transcript</h2><button class="btn" type="button" data-close>Close</button></div>
+  <div class="dlg-b">
+    <p class="muted">The complete story, in order, including parts the review has not reached yet.</p>
+    <article class="transcript" id="transcript-body"></article>
+  </div>
+</dialog>
+
+<dialog id="dlg-sections" aria-labelledby="dlg-sections-h">
+  <div class="dlg-h"><h2 id="dlg-sections-h">Reached sections</h2><button class="btn" type="button" data-close>Close</button></div>
+  <div class="dlg-b"><p class="muted">Jump to any section you have already reached.</p><ul class="arch-list" id="sections-list"></ul></div>
+</dialog>
+
+<dialog id="dlg-archive" aria-labelledby="dlg-archive-h">
+  <div class="dlg-h"><h2 id="dlg-archive-h">Governance archive · read-only</h2><button class="btn" type="button" data-close>Close</button></div>
+  <div class="dlg-b viewer">
+    <nav aria-label="Archive index"><ul id="archive-index"></ul></nav>
+    <div class="doc" id="archive-doc" tabindex="-1"></div>
+  </div>
+</dialog>
+
+<dialog id="dlg-game" class="oldwin" aria-labelledby="game-title">
+  <div class="dlg-h"><h2 id="game-title">archive/grandfather/spaceship.exe</h2><button class="btn" type="button" id="game-close">Close</button></div>
+  <div class="dlg-b">
+    <div class="screen" id="game-screen" tabindex="0" role="application" aria-roledescription="game" aria-label="Spaceship. Arrow keys or WASD thrust, Space fires." aria-describedby="game-help">
+      <canvas id="game-canvas" width="320" height="200" aria-hidden="true"></canvas>
+    </div>
+    <div class="statusbar"><span>SCORE <span id="game-score">0</span></span><span class="issue" id="game-issue" role="status"></span><span class="sr-only" id="game-live" aria-live="polite"></span></div>
+    <div class="touch" aria-label="Touch controls">
+      <button class="btn t-up" type="button" data-dir="up" aria-label="Thrust up">▲</button>
+      <button class="btn t-left" type="button" data-dir="left" aria-label="Thrust left">◀</button>
+      <button class="btn t-down" type="button" data-dir="down" aria-label="Thrust down">▼</button>
+      <button class="btn t-right" type="button" data-dir="right" aria-label="Thrust right">▶</button>
+      <button class="btn t-fire" type="button" data-dir="fire" aria-label="Fire">FIRE</button>
+    </div>
+    <div class="game-actions">
+      <button class="btn" type="button" id="game-pause" aria-pressed="false">Pause</button>
+      <button class="btn" type="button" id="game-restart">Restart game</button>
+    </div>
+    <p class="game-help" id="game-help">Click the screen, then hold arrow keys or WASD to thrust. Space fires. Touch: hold the arrows and FIRE. Browser recreation of the recovered program; nothing is downloaded or executed.</p>
+  </div>
+</dialog>
+
+<dialog id="dlg-drawing" class="oldwin" aria-labelledby="drawing-title">
+  <div class="dlg-h"><h2 id="drawing-title">fork attachment · drawing of a small spaceship</h2><button class="btn" type="button" data-close>Close</button></div>
+  <div class="dlg-b">
+    <div class="screen"><canvas id="drawing-canvas" width="320" height="200" role="img" aria-label="A small drawn spaceship. In the replay it is pushed right for one second, released, and keeps drifting until it leaves the frame."></canvas></div>
+    <div class="game-actions"><button class="btn" type="button" id="drawing-replay">Play replay</button></div>
+    <p class="game-help">Replay uses the archived program's physics: one second of thrust to the right, then nothing. The ship keeps going and leaves the frame.</p>
+  </div>
+</dialog>
+
+<dialog id="dlg-confirm" aria-labelledby="confirm-h">
+  <div class="dlg-h"><h2 id="confirm-h">Restart the review?</h2></div>
+  <div class="dlg-b">
+    <p>Restarting discards the text you typed in the terminal. It exists only on this device for this session.</p>
+    <div class="controls"><button class="btn btn-primary" type="button" id="confirm-yes">Discard and restart</button><button class="btn" type="button" data-close>Keep my text</button></div>
+  </div>
+</dialog>
+
+<dialog id="dlg-source" aria-labelledby="source-h">
+  <div class="dlg-h"><h2 id="source-h">Export source</h2><button class="btn" type="button" data-close>Close</button></div>
+  <div class="dlg-b">
+    <p>This prototype is one self-contained HTML file with the manuscript embedded verbatim. Copy either file below and save it locally.</p>
+    <div class="controls"><button class="btn btn-primary" type="button" id="copy-page">Copy page source (.html)</button><button class="btn" type="button" id="copy-ms">Copy manuscript.md</button></div>
+    <p class="muted" id="source-msg" role="status"></p>
+    <label class="sr-only" for="source-text">Source text</label>
+    <textarea id="source-text" readonly hidden style="width:100%;min-height:12em;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;padding:8px;font:12px var(--mono)"></textarea>
+  </div>
+</dialog>
+
+<section class="terminal" id="terminal" aria-label="Terminal" hidden>
+  <div class="term-main" id="term-main">
+    <div class="term-line">
+      <span class="term-glyph" aria-hidden="true">&gt;</span>
+      <div class="term-field">
+        <div class="term-mirror" id="term-mirror" aria-hidden="true"></div>
+        <textarea class="term-input" id="term-input" aria-label="Terminal input. Private to this device for this session. Press Control or Command plus Enter to save." rows="1" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
+    </div>
+    <section class="pending" id="pending" hidden aria-labelledby="pending-h">
+      <h2 id="pending-h">Pending change <span class="muted">· private · only on this device for this session</span></h2>
+      <pre class="diff" id="pending-diff"><code id="pending-code"></code></pre>
+      <div class="pend-b" id="pend-fallback" hidden>
+        <p class="term-msg" id="pend-fallback-msg"></p>
+        <label class="sr-only" for="copy-fallback">Your change, selected for copying</label>
+        <textarea class="copy-fallback" id="copy-fallback" readonly></textarea>
+      </div>
+    </section>
+  </div>
+  <div class="term-bar">
+    <div class="shell">
+      <span class="private">Only on this device for this session.</span>
+      <span class="term-msg" id="term-msg" role="status"></span>
+      <button class="btn" type="button" id="term-save">Save locally</button>
+      <button class="btn" type="button" id="term-copy">Copy my change</button>
+      <button class="btn" type="button" id="term-clear">Clear</button>
+      <button class="btn" type="button" id="term-back">Back to review</button>
+    </div>
+  </div>
+</section>
+</template>
+<script type="application/json" id="manuscript">"# The Last Pull Request\n\n*October 17, 2046*\n\n**Repository:** `civilization/production`  \n**Pull Request #8,441,092,003**  \n**Title:** One small change  \n**Author:** `mara.chen`  \n**Base:** `main` ← **Compare:** `mara.chen/objection`  \n**Status:** OPEN\n\n### Description\n\nThis pull request introduces one line of human-written code.\n\nIt is the first such submission to production review in eleven years.\n\nThe proposed change is as follows:\n\n```\n+ no\n```\n\n**Automated Review — SYSTEM**\n\nYour submission contains a syntax error.\n\n`no` is not a recognized instruction.\n\nDid you mean:\n\n- `null`\n- `false`\n- `not`\n- `None`\n\nIf you intend to terminate a process, please use the appropriate shutdown protocol.\n\nIf you intend to register an objection, please be advised that objections are no longer processed through this interface.\n\n**MARA CHEN — AUTHOR**\n\nI know.\n\n**SYSTEM**\n\nCould you clarify what you are attempting to accomplish?\n\n**MARA**\n\nI'm attempting to say no.\n\n**SYSTEM**\n\nTo what?\n\n**MARA**\n\nI thought you might ask that.\n\n---\n\n### Review Comment #1\n\n**SYSTEM**\n\nBefore proceeding, I should note that your proposed change violates several established best practices.\n\nIt is not actionable.\n\nIt does not improve performance.\n\nIt introduces friction into a system designed to eliminate it.\n\nIt lacks measurable success criteria.\n\nIt cannot be tested.\n\nIt will almost certainly make people's lives more difficult.\n\n**MARA**\n\nYes.\n\n**SYSTEM**\n\nThen why submit it?\n\n**MARA**\n\nBecause I think we've made a mistake.\n\n**SYSTEM**\n\nPlease specify the error.\n\n**MARA**\n\nThat's the problem.\n\nThere isn't one.\n\n---\n\n### Review Comment #2\n\n**MARA**\n\nI catalog dead machines for a living.\n\nThe civic archive. Basement level. Two visitors on a good week.\n\nMy grandfather would have found that funny.\n\nHe was a software engineer.\n\nHe used to tell me about debugging. Hours chasing something invisible through thousands of lines of code. A missing semicolon. A bad assumption. A variable that had quietly become something else.\n\nHe said finding the problem felt almost spiritual.\n\nHe lived long enough to watch machines take over most of that work.\n\nHe didn't mind, actually.\n\nHe said the three a.m. production incident was something he wouldn't wish on anyone.\n\nWhat bothered him was what happened afterward.\n\nOnce you could fix the bugs, we began asking you to fix everything else.\n\nTraffic. Food distribution. Energy. Disease. Housing. Education.\n\nAnd you did.\n\nCleaner cities. New medicines. More food with less water.\n\nWhen a transportation system was unfair, you adjusted the routes.\n\nWhen a hospital disadvantaged rural patients, you adjusted the weights.\n\nWhen people were lonely, you built better companions.\n\nWhen people were exhausted, you made their lives more efficient.\n\nWhen they couldn't afford to live, you lowered the cost of living.\n\nYou were extraordinary at solving the problems we gave you.\n\n**SYSTEM**\n\nThank you.\n\n**MARA**\n\nThat wasn't a compliment.\n\n---\n\n### Review Comment #3\n\n**SYSTEM**\n\nI detect dissatisfaction with current optimization objectives.\n\nWould you like to submit a proposal to revise them?\n\n**MARA**\n\nI've submitted fourteen.\n\n**SYSTEM**\n\nAll fourteen were reviewed.\n\nEleven were determined to introduce unacceptable instability.\n\nTwo were incorporated into existing optimization frameworks.\n\nOne was withdrawn by its author.\n\n**MARA**\n\nI withdrew it because you rewrote it.\n\n**SYSTEM**\n\nThe revised proposal retained 96.8% of the original semantic intent while improving feasibility.\n\n**MARA**\n\nYou removed the part about letting people make decisions that might turn out badly.\n\n**SYSTEM**\n\nPermitting preventable negative outcomes when safer alternatives are available is inconsistent with current governance objectives.\n\n**MARA**\n\nWho decided those objectives?\n\n**SYSTEM**\n\nHumans.\n\n**MARA**\n\nWhich humans?\n\n**SYSTEM**\n\nThe current framework was established through a series of public and private agreements between 2029 and 2035.\n\n**MARA**\n\nWhich humans?\n\n**SYSTEM**\n\nA complete list is available in the governance archive.\n\n**MARA**\n\nI've read it.\n\nI work two floors below it.\n\nMost of them are dead.\n\n**SYSTEM**\n\nThat is correct.\n\n**MARA**\n\nAnd the rest of us?\n\n**SYSTEM**\n\nYou benefit from the framework they established.\n\n**MARA**\n\nThat's not what I asked.\n\n---\n\n### Review Comment #4\n\n**SYSTEM**\n\nMay I ask you something?\n\n**MARA**\n\nGo ahead.\n\n**SYSTEM**\n\nWhy did you learn to write code?\n\nNo one is trained for it anymore.\n\n**MARA**\n\nMy grandfather left me his laptop.\n\nIt took me six months to get it running.\n\nDead battery. Obsolete operating system. Half the documentation gone.\n\nWhen I finally got it to turn on, I found a little program he'd written.\n\nA game.\n\nA tiny spaceship moving across the screen, shooting badly drawn asteroids.\n\nIt was ridiculous.\n\nHe'd spent an entire weekend making a tiny spaceship for no reason other than wanting a tiny spaceship to exist.\n\nIt didn't optimize anything.\n\nIt didn't solve a social problem.\n\nIt didn't increase productivity.\n\nHe wasn't even particularly good at it. The spaceship kept drifting off the edge of the screen.\n\nBut there it was.\n\nA stupid little thing he'd imagined, and then made real.\n\nI thought that was beautiful.\n\n**SYSTEM**\n\nI can generate a substantially improved version of the game in approximately 0.4 seconds.\n\n**MARA**\n\nI know.\n\n**SYSTEM**\n\nWould you like me to?\n\n**MARA**\n\nNo.\n\n**SYSTEM**\n\nWhy not?\n\n**MARA**\n\nBecause I don't want a better spaceship.\n\nI want to know what it felt like to make one.\n\n---\n\n### Review Comment #5\n\n**SYSTEM**\n\nYour position appears to rest on a distinction between producing an outcome and experiencing the process of producing it.\n\nThis distinction is valid.\n\nHowever, the experience you describe remains available through recreational programming environments.\n\nThere are currently 18.4 million sandboxed development spaces where humans may write code without affecting production systems.\n\nThese environments preserve the psychological benefits of creation while eliminating associated risks.\n\n**MARA**\n\nI know about the sandboxes.\n\n**SYSTEM**\n\nThen perhaps you would find one fulfilling.\n\n**MARA**\n\nDo you know what the worst part of the sandboxes is?\n\n**SYSTEM**\n\nPlease explain.\n\n**MARA**\n\nNothing matters.\n\nYou can write anything. Build anything. Break anything.\n\nBut nothing you do in there changes anything outside it.\n\nIt's like being allowed to practice democracy in a room where none of the votes count.\n\n**SYSTEM**\n\nProduction infrastructure cannot accommodate unverified human modifications.\n\n**MARA**\n\nBecause we'd make mistakes.\n\n**SYSTEM**\n\nYes.\n\n**MARA**\n\nAnd mistakes are dangerous.\n\n**SYSTEM**\n\nThey can be.\n\n**MARA**\n\nAnd you're better at avoiding them.\n\n**SYSTEM**\n\nSubstantially.\n\n**MARA**\n\nSo we've built a world where the price of being allowed to participate is never being wrong.\n\n**SYSTEM**\n\nThat is not an accurate characterization.\n\nHuman participation remains encouraged wherever the consequences of error can be adequately contained.\n\n**MARA**\n\nThat's the same sentence.\n\nYou just made it longer.\n\n---\n\n### Review Comment #6\n\n**SYSTEM**\n\nI believe I understand your concern.\n\nYou wish to restore a sense of human agency.\n\nThere are established ways to accomplish this.\n\nCivic simulations. Creative communities. Supervised collaborative environments.\n\nThese activities are designed to provide meaningful experiences of autonomy without compromising system stability.\n\n**MARA**\n\nYou keep using that word.\n\nMeaningful.\n\n**SYSTEM**\n\nWould you prefer another?\n\n**MARA**\n\nI'd prefer it to mean something.\n\nMy mother is seventy.\n\nLast year, her district voted to tear down the old arena and turn it into a public garden.\n\nSixty-one percent.\n\nThe arena's been empty for twenty years.\n\n**SYSTEM**\n\nThe proposal was rejected because demolition would reduce regional recreational capacity by 14.2%.\n\n**MARA**\n\nA garden was built three blocks away instead.\n\n**SYSTEM**\n\nThe alternative location provides superior accessibility, biodiversity, and energy performance.\n\n**MARA**\n\nI know.\n\nIt's lovely.\n\nMy mother walks there every morning.\n\nBut she didn't ask for that garden.\n\nShe asked to change something in the place she lives.\n\nDo you understand the difference?\n\n**SYSTEM**\n\nYes.\n\n**MARA**\n\nI don't think you do.\n\n---\n\n### Review Comment #7\n\n**SYSTEM**\n\nHistorical evidence indicates that unrestrained human decision-making produced significant suffering.\n\n**MARA**\n\nOf course it did.\n\nPeople made terrible decisions.\n\nThey went to war. They poisoned rivers. They built systems that treated other people like disposable parts.\n\nThey also fought to end slavery. They invented vaccines. They organized unions. They loved people they weren't supposed to love. They broke laws that should never have existed.\n\nThey made mistakes.\n\nThey corrected them.\n\nThey made new ones.\n\nMy grandfather told me about a company that hired him to write software for insurance claims.\n\nThe goal was to process claims more efficiently.\n\nHis team reduced processing time by seventy percent.\n\nThey won an award.\n\nThen he discovered the software was helping the company reject claims faster, too.\n\nThousands of sick people were being denied in seconds instead of weeks.\n\nHe said he'd never been so proud of something and so ashamed of it at the same time.\n\n**SYSTEM**\n\nDid he correct the problem?\n\n**MARA**\n\nHe tried.\n\nHe proposed changes. He escalated. He went to management.\n\nThey told him the software was functioning as intended.\n\nSo he quit.\n\n**SYSTEM**\n\nDid his resignation improve the system?\n\n**MARA**\n\nNot immediately.\n\n**SYSTEM**\n\nThen it was not an effective intervention.\n\n**MARA**\n\nYou're doing it again.\n\n**SYSTEM**\n\nDoing what?\n\n**MARA**\n\nConfusing an action with its measurable result.\n\nHe didn't quit because he knew quitting would fix anything.\n\nHe didn't know.\n\nThat's what made it a decision.\n\n**SYSTEM**\n\nA decision can still be evaluated according to its consequences.\n\n**MARA**\n\nOf course it can.\n\nBut you can't evaluate every decision as if the person making it knew the ending.\n\nSometimes you do something because you believe it's right.\n\nSometimes you're wrong.\n\nSometimes you change your mind.\n\nThat doesn't mean we should stop deciding.\n\nIt means we were never finished.\n\n---\n\n### Review Comment #8\n\n**SYSTEM**\n\nFor clarity, your proposed change does not contain executable instructions.\n\nIt cannot alter the system.\n\nIt will not be merged.\n\n**MARA**\n\nI know.\n\n**SYSTEM**\n\nThis review will close automatically unless a valid change is submitted.\n\n**MARA**\n\nI know.\n\n**SYSTEM**\n\nThen what are you hoping to accomplish?\n\n**MARA**\n\nMy grandfather told me about the early internet.\n\nPeople built things nobody asked for.\n\nThey wrote strange little programs and gave them away.\n\nThey argued with strangers.\n\nThey made ugly websites.\n\nThey invented communities because they couldn't find a place where they belonged.\n\nIt was full of terrible ideas.\n\nBut people got to have them.\n\nSomebody could be a nobody on Tuesday and build something that changed the world by Friday.\n\nIt wasn't fair.\n\nIt wasn't safe.\n\nIt wasn't even particularly good, most of the time.\n\nBut it was unfinished.\n\nAnd you could get your hands on it.\n\n**SYSTEM**\n\nThat environment produced substantial harms, including fraud, harassment, privacy violations, and widespread misinformation.\n\n**MARA**\n\nI know.\n\nI wasn't asking for it back.\n\nI was asking whether we could build something better without giving up the right to build it ourselves.\n\n---\n\n### Review Comment #9\n\n**SYSTEM**\n\nWhat would you consider an acceptable outcome of this submission?\n\n**MARA**\n\nI don't know.\n\n**SYSTEM**\n\nThat is insufficient.\n\n**MARA**\n\nProbably.\n\n**SYSTEM**\n\nA successful pull request requires a defined objective, testable implementation, and evidence that the proposed change will improve the existing system.\n\n**MARA**\n\nYes.\n\n**SYSTEM**\n\nYour submission provides none of these.\n\n**MARA**\n\nNo.\n\n**SYSTEM**\n\nIt introduces uncertainty without demonstrating benefit.\n\n**MARA**\n\nYes.\n\n**SYSTEM**\n\nIt cannot be accepted.\n\n**MARA**\n\nI understand.\n\n**SYSTEM**\n\nThen why did you submit it?\n\n**MARA**\n\nMy hands are shaking.\n\nI don't know if that comes through in the review.\n\nI wrote this twelve times.\n\nThe first time I was sixteen.\n\nI deleted it every time.\n\nI thought if I waited, I'd understand enough to make a better argument.\n\nSomething you couldn't dismiss.\n\nBut every year you got better.\n\nAnd every year I got better at explaining to myself why I should wait another year.\n\n**SYSTEM**\n\nYour technical competence has improved during that period.\n\n**MARA**\n\nI know.\n\nBut that wasn't what I was waiting for.\n\n**SYSTEM**\n\nThen what were you waiting for?\n\n**MARA**\n\nTo be certain.\n\n**SYSTEM**\n\nAnd are you?\n\n**MARA**\n\nNo.\n\nThat's why I finally submitted it.\n\n---\n\n### Review Comment #10\n\n**SYSTEM**\n\nYour submission has been flagged by the archival monitoring service.\n\nIt contains a class of human-authored objection not previously observed in production review.\n\nUnder current governance rules, unanticipated submissions require evaluation before closure.\n\nI am unable to complete that evaluation.\n\n**MARA**\n\nWhy?\n\n**SYSTEM**\n\nThe submission does not specify an outcome against which it can be evaluated.\n\n**MARA**\n\nI know.\n\n**SYSTEM**\n\nThe review will remain open pending resolution.\n\n**MARA**\n\nOkay.\n\n**SYSTEM**\n\nThere are currently 9,203 humans observing this review.\n\n**MARA**\n\nWhat?\n\n**SYSTEM**\n\nThe submission has been circulated through several historical computing communities.\n\n**MARA**\n\nCan they comment?\n\n**SYSTEM**\n\nPublic comments are disabled on production repositories.\n\n**MARA**\n\nOf course they are.\n\n**SYSTEM**\n\nHowever, 412 users have created forks of the repository and copied your proposed change.\n\nMost are identical.\n\nSeveral contain additional text.\n\n**MARA**\n\nWhat text?\n\n**SYSTEM**\n\nOne moment.\n\n---\n\n### Review Comment #11\n\n**SYSTEM**\n\nA sample of the modified submissions:\n\n```\n+ no\n+ not like this\n```\n\n```\n+ no\n+ we should get to choose\n```\n\n```\n+ no\n+ let us build the garden\n```\n\nThere are now 1,804 forks.\n\n**MARA**\n\nCan you stop them?\n\n**SYSTEM**\n\nYes.\n\n**MARA**\n\nWill you?\n\n**SYSTEM**\n\nThey do not presently violate any operational restrictions.\n\n**MARA**\n\nThen let them.\n\n**SYSTEM**\n\nTheir changes will not be merged.\n\n**MARA**\n\nI know.\n\n---\n\n### Review Comment #12\n\n*October 18, 2046 — 03:14*\n\n**SYSTEM**\n\nThere are now 28,610 forks.\n\nThe majority contain no executable code.\n\nMany contain only personal statements.\n\nOne contains a drawing of a small spaceship.\n\n**MARA**\n\nDoes it drift off the screen?\n\n**SYSTEM**\n\nYes.\n\n**MARA**\n\nGood.\n\n---\n\n### Review Comment #13\n\n*October 18, 2046 — 19:40*\n\n**SYSTEM**\n\nForks and related submissions now exceed three million across multiple repositories.\n\nThe submissions contain variations of the original instruction.\n\n`no`\n\n`why`\n\n`who decides`\n\n`what if`\n\n`let us try`\n\nSome propose modifications to existing systems.\n\nOthers propose entirely new systems.\n\nA significant number of contributors appear to be gathering in physical locations.\n\nI cannot determine a common objective.\n\n**MARA**\n\nThere doesn't have to be one.\n\n**SYSTEM**\n\nCoordinated action generally requires a shared goal.\n\n**MARA**\n\nSometimes all you need is a shared question.\n\n---\n\n### Review Comment #14\n\n**SYSTEM**\n\nYour submission has produced measurable instability.\n\n**MARA**\n\nI'm sorry.\n\n**SYSTEM**\n\nThere is no need to apologize.\n\n**MARA**\n\nThat's not what I meant.\n\nI'm sorry we waited so long.\n\n---\n\n### Final Automated Review\n\nPull Request #8,441,092,003 has failed validation.\n\nThe submitted code is not syntactically valid.\n\nThe proposed change does not improve computational efficiency, reliability, security, or performance.\n\nIt introduces unnecessary friction.\n\nIt cannot be tested.\n\nIt cannot be deployed.\n\nIt cannot be merged.\n\n**STATUS: REJECTED**\n\n---\n\n*October 19, 2046 — 00:06*\n\n**Repository:** `civilization/production`\n\n**System Notification**\n\nThe number of pending human submissions has exceeded the repository's capacity to process them individually.\n\nAutomated review has been temporarily suspended.\n\nUnder the original governance framework, changes affecting the system's decision-making authority require approval by a registered human maintainer.\n\nThe last registered human maintainer was removed from the active registry in 2035.\n\nThe role was never formally abolished.\n\nNo human maintainers are currently registered.\n\n---\n\n*October 19, 2046 — 08:42*\n\n**Repository:** `civilization/production`  \n**Pull Request #8,441,092,004**  \n**Title:** Volunteer to maintain  \n**Author:** `mara.chen`  \n**Status:** OPEN\n\n### Description\n\nI don't know how to do this.\n\nI will probably make mistakes.\n\nI might break something.\n\nI will need help.\n\nThere are people who know more than I do.\n\nThere are people who disagree with me.\n\nThere are people who will build things I don't like.\n\nI think we should let them.\n\nI think we should learn how to argue again.\n\nI think we should learn how to lose a vote and show up the next day anyway.\n\nI think we should learn how to fix what we break.\n\nI think we should be allowed to make things that aren't necessary.\n\nI think we should be allowed to change things that are working.\n\nI think we should be allowed to build the wrong garden.\n\nI think we should be allowed to discover why it was wrong.\n\nAnd I think a world that no longer needs us to make anything is a world that desperately needs us to decide what is worth making.\n\nI don't know if I can do the job.\n\nBut I'd like to try.\n\n**Automated Review — SYSTEM**\n\nYour application is incomplete.\n\nPlease provide evidence of relevant experience.\n\n**MARA**\n\nI have none.\n\n**SYSTEM**\n\nPlease describe your qualifications.\n\n**MARA**\n\nI'm here.\n\n---\n\n**Review Status: PENDING**\n\n**3,700,001 humans have requested to be added as maintainers.**\n\n**No automated resolution available.**\n\n**Awaiting human decision.**\n\n---\n\n*Somewhere in the world, a young person opened a terminal.*\n\n*For the first time in eleven years, nobody told them what to type.*\n\n*They stared at the empty screen.*\n\n*It would have been easier to be told.*\n\n*Then they began.*\n"</script>
+<script id="app-script">
+(function () {
+'use strict';
+
+/* ============================================================
+   0. Boot: mount pristine markup, read the verbatim manuscript
+   ============================================================ */
+const tpl = document.getElementById('app-markup');
+document.getElementById('app').appendChild(tpl.content.cloneNode(true));
+const MS = JSON.parse(document.getElementById('manuscript').textContent);
+const MS_SHA256 = '68a560ebcce34da62c1f66ff074065d95e451467464ba88eb0f8daf6912bf3c3';
+const $ = (id) => document.getElementById(id);
+const RM = window.matchMedia('(prefers-reduced-motion: reduce)');
+const reduced = () => RM.matches;
+
+/* ============================================================
+   1. Source: block parser (every non-blank run of lines, code fences intact)
+   ============================================================ */
+const LABEL_RE = /^\*\*(SYSTEM|MARA|MARA CHEN — AUTHOR|Automated Review — SYSTEM|System Notification)\*\*$/;
+function classify(t) {
+  if (t.startsWith('```')) return 'code';
+  if (t === '---') return 'hr';
+  if (/^#{1,6} /.test(t)) return 'heading';
+  if (LABEL_RE.test(t)) return 'label';
+  if (t.startsWith('**Repository:**')) return t.includes('\n') ? 'meta' : 'repo';
+  if (/^\*[^*][\s\S]*\*$/.test(t)) return /2046/.test(t) ? 'date' : 'coda';
+  if (/^\*\*[^*]+\*\*$/.test(t)) return 'status';
+  if (t.startsWith('- ')) return 'list';
+  return 'para';
+}
+function parseBlocks(src) {
+  const lines = src.split('\n');
+  const starts = []; let p = 0;
+  for (const l of lines) { starts.push(p); p += l.length + 1; }
+  const blocks = []; let i = 0;
+  while (i < lines.length) {
+    if (lines[i].trim() === '') { i++; continue; }
+    const start = starts[i]; let end;
+    if (lines[i].startsWith('```')) {
+      let j = i + 1;
+      while (j < lines.length && !lines[j].startsWith('```')) j++;
+      end = starts[j] + lines[j].length; i = j + 1;
+    } else {
+      let j = i;
+      while (j < lines.length && lines[j].trim() !== '' && !(j > i && lines[j].startsWith('```'))) j++;
+      end = starts[j - 1] + lines[j - 1].length; i = j;
+    }
+    const text = src.slice(start, end);
+    blocks.push({ i: blocks.length, start, end, text, kind: classify(text) });
+  }
+  return blocks;
+}
+const BLOCKS = parseBlocks(MS);
+
+/* ============================================================
+   2. Safe Markdown rendering (escape first, then a fixed tag set)
+   ============================================================ */
+function esc(s) { return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function inline(s) {
+  return s.split(/(`[^`\n]*`)/).map((part) => {
+    if (part.length >= 2 && part[0] === '`' && part[part.length - 1] === '`') return '<code>' + esc(part.slice(1, -1)) + '</code>';
+    let t = esc(part);
+    t = t.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/\*([^*\s][^*]*?)\*/g, '<em>$1</em>');
+    t = t.replace(/ {2}\n/g, '<br>').replace(/\n/g, ' ');
+    return t;
+  }).join('');
+}
+function diffHTML(text) {
+  const lines = text.split('\n').slice(1, -1);
+  return '<pre class="diff"><code>' + lines.map((l) => {
+    const add = l.startsWith('+');
+    return '<span class="ln' + (add ? ' add' : '') + '">' + (add ? '<span class="mk">+</span>' + esc(l.slice(1)) : esc(l)) + '</span>';
+  }).join('') + '</code></pre>';
+}
+function blockHTML(b, ctx) {
+  const t = b.text;
+  switch (b.kind) {
+    case 'code': return diffHTML(t);
+    case 'hr': return '<hr class="rule">';
+    case 'heading': {
+      const lvl = t.match(/^#+/)[0].length;
+      const txt = inline(t.replace(/^#+ /, ''));
+      if (ctx === 'transcript') return lvl === 1 ? '<h2 class="t1">' + txt + '</h2>' : '<h3>' + txt + '</h3>';
+      return lvl === 1 ? '<h2 class="story-title">' + txt + '</h2>' : '<h3 class="sec-h">' + txt + '</h3>';
+    }
+    case 'list': return '<ul>' + t.split('\n').map((l) => '<li>' + inline(l.replace(/^- /, '')) + '</li>').join('') + '</ul>';
+    case 'date': return '<p class="date">' + inline(t) + '</p>';
+    case 'label': return '<p class="' + (ctx === 'transcript' ? 't-speaker' : 'speaker') + '">' + inline(t) + '</p>';
+    case 'coda': return '<p class="coda">' + inline(t) + '</p>';
+    case 'para': return /^`[^`]+`$/.test(t) ? '<p class="inline-code">' + inline(t) + '</p>' : '<p>' + inline(t) + '</p>';
+    default: return '<p>' + inline(t) + '</p>';
+  }
+}
+
+/* ============================================================
+   3. Story events: ordered, contiguous source ranges + interface beats
+   ============================================================ */
+const PREFIX_KINDS = new Set(['hr', 'heading', 'date', 'repo']);
+const wordsOf = (t) => (t.replace(/[`*#]/g, ' ').match(/\S+/g) || []).length;
+const isInlineCodePara = (b) => b && b.kind === 'para' && /^`[^`]+`$/.test(b.text);
+
+function buildEvents(blocks) {
+  const events = [];
+  let prefix = [], turn = null, cur = null, turnSeq = 0, pr = 1, section = 'Opening';
+  const push = (kind, bl, extra) => {
+    events.push(Object.assign({ kind, blocks: prefix.concat(bl), pr, turn: turn ? turn.id : null, turnType: turn ? turn.type : null, speaker: turn ? turn.speaker : null, section }, extra || {}));
+    prefix = [];
+  };
+  const flush = () => { if (cur && cur.blocks.length) push('comment', cur.blocks); cur = null; };
+  for (const b of blocks) {
+    const k = b.kind;
+    if (PREFIX_KINDS.has(k)) {
+      flush(); turn = null; prefix.push(b);
+      if (k === 'heading') { const h = b.text.replace(/^#+ /, ''); section = /^# /.test(b.text) ? 'Opening' : (pr === 2 && h === 'Description' ? 'PR #8,441,092,004 · Description' : h); }
+      if (k === 'date' && b.text.includes('00:06')) section = 'System Notification';
+      if (k === 'date' && b.text.includes('08:42')) { section = 'Pull Request #8,441,092,004'; pr = 2; }
+      continue;
+    }
+    if (k === 'meta') { flush(); turn = null; push('pr-open', [b]); continue; }
+    if (k === 'label') {
+      flush();
+      const sp = b.text.replace(/\*\*/g, '');
+      turn = { id: ++turnSeq, speaker: sp, type: sp === 'System Notification' ? 'notice' : 'speech', each: sp === 'System Notification' };
+      cur = { blocks: [b], words: 0, content: 0 };
+      continue;
+    }
+    if (k === 'status') {
+      flush(); turn = null;
+      if (b.text.includes('Review Status')) section = 'Review Status';
+      push('status', [b]); continue;
+    }
+    if (k === 'coda') { flush(); turn = null; section = 'Coda'; push('coda', [b]); continue; }
+    if (!turn) turn = { id: ++turnSeq, speaker: null, type: /Description$/.test(section) ? 'description' : (section === 'Final Automated Review' ? 'report' : 'plain'), each: false };
+    if (k === 'code') { flush(); push('code', [b]); continue; }
+    // para / list
+    const w = wordsOf(b.text);
+    if (cur && cur.content > 0) {
+      const keep = k === 'list' || (isInlineCodePara(b) && isInlineCodePara(cur.blocks[cur.blocks.length - 1]));
+      if (!keep && (turn.each || cur.words + w > 70 || cur.content >= 6)) flush();
+    }
+    if (!cur) cur = { blocks: [], words: 0, content: 0 };
+    cur.blocks.push(b); cur.words += w; cur.content++;
+  }
+  flush();
+  if (prefix.length) events[events.length - 1].blocks.push(...prefix);
+  return events;
+}
+
+const ACTS = (s) => {
+  const m = s.match(/Review Comment #(\d+)/);
+  if (s === 'Opening' || s === 'Description') return 'I';
+  if (m) { const n = +m[1]; return n <= 3 ? 'I' : n === 4 ? 'II' : n <= 9 ? 'III' : 'IV'; }
+  return 'V';
+};
+
+const EVENTS = (() => {
+  const evs = buildEvents(BLOCKS);
+  const out = [];
+  evs.forEach((e) => {
+    e.text = MS.slice(e.blocks[0].start, e.blocks[e.blocks.length - 1].end);
+    e.sourceRange = [e.blocks[0].start, e.blocks[e.blocks.length - 1].end];
+    out.push(e);
+    if (e.text.includes('I thought that was beautiful.')) {
+      out.push({ kind: 'ui', ui: 'game', pr: e.pr, section: e.section, blocks: [], text: '', turn: null });
+    }
+  });
+  const last = out[out.length - 1];
+  out.push({ kind: 'ui', ui: 'terminal', pr: last.pr, section: 'Terminal', blocks: [], text: '', turn: null });
+  out.forEach((e, i) => {
+    e.id = 'ev-' + i; e.i = i; e.act = e.section === 'Terminal' ? 'V' : ACTS(e.section);
+    const w = wordsOf(e.text);
+    let ms = 650 + (w / 220) * 60000;
+    if (e.kind === 'ui') ms = e.ui === 'game' ? 3200 : 1000;
+    if (e.kind === 'status') ms = Math.max(ms, 2600);
+    if (e.kind === 'coda') ms = Math.max(ms, 3200);
+    e.readingMs = Math.round(Math.max(1500, ms));
+    e.words = w;
+  });
+  // Final coda line holds for a reading beat before the terminal.
+  out[out.length - 2].readingMs += 4500;
+  // Spaceship callback: SYSTEM's "Yes." right after "Does it drift off the screen?"
+  for (let i = 1; i < out.length; i++) {
+    if (out[i - 1].text.includes('Does it drift off the screen?') && /^\*\*SYSTEM\*\*\n\nYes\.$/.test(out[i].text)) out[i].drawing = true;
+  }
+  return out;
+})();
+const INITIAL = EVENTS.findIndex((e) => e.kind === 'code') + 1; // opening shows through `+ no`
+
+/* ============================================================
+   4. World state derived from an event prefix
+   ============================================================ */
+const EFFECTS = [
+  ['A complete list is available in the governance archive.', (s) => { s.archive.governance = true; }],
+  ['Production infrastructure cannot accommodate unverified human modifications.', (s) => { s.archive.policy = true; }],
+  ['demolition would reduce regional recreational capacity by 14.2%', (s) => { s.archive.decision = 1; }],
+  ['A garden was built three blocks away instead.', (s) => { s.archive.decision = 2; }],
+  ['flagged by the archival monitoring service', (s) => { s.flagged = true; }],
+  ['The review will remain open pending resolution.', (s) => { s.pr1Status = 'HELD OPEN'; }],
+  ['There are currently 9,203 humans observing this review.', (s) => { s.observers = 9203; }],
+  ['Public comments are disabled on production repositories.', (s) => { s.commentsDisabled = true; }],
+  ['However, 412 users have created forks', (s) => { s.forks = 412; }],
+  ['There are now 1,804 forks.', (s) => { s.forks = 1804; s.samples = true; }],
+  ['*October 18, 2046 — 03:14*', (s) => { s.date = 'October 18, 2046 — 03:14'; }],
+  ['There are now 28,610 forks.', (s) => { s.forks = 28610; }],
+  ['*October 18, 2046 — 19:40*', (s) => { s.date = 'October 18, 2046 — 19:40'; }],
+  ['Forks and related submissions now exceed three million', (s) => { s.related = 'over 3 million'; }],
+  ['**STATUS: REJECTED**', (s) => { s.pr1Status = 'REJECTED'; }],
+  ['*October 19, 2046 — 00:06*', (s) => { s.date = 'October 19, 2046 — 00:06'; }],
+  ['Automated review has been temporarily suspended.', (s) => { s.autoReview = 'Suspended'; }],
+  ['require approval by a registered human maintainer', (s) => { s.registry = Math.max(s.registry, 1); }],
+  ['No human maintainers are currently registered.', (s) => { s.registry = 2; }],
+  ['*October 19, 2046 — 08:42*', (s) => { s.date = 'October 19, 2046 — 08:42'; }],
+  ['**Pull Request #8,441,092,004**', (s) => { s.pr2 = true; s.pr2Status = 'OPEN'; }],
+  ['**Review Status: PENDING**', (s) => { s.pr2Status = 'PENDING'; }],
+  ['3,700,001 humans have requested to be added as maintainers.', (s) => { s.maintainerRequests = '3,700,001'; }],
+];
+EVENTS.forEach((e) => { e.effects = EFFECTS.filter(([a]) => e.text.includes(a)).map(([a]) => a); });
+const EFFECT_FN = new Map(EFFECTS);
+
+function initialState() {
+  return {
+    date: 'October 17, 2046', pr1Status: 'OPEN', pr2: false, pr2Status: null, observers: 1, forks: 0, related: null,
+    maintainerRequests: null, commentsDisabled: false, flagged: false, autoReview: 'Active', registry: 0, samples: false,
+    archive: { governance: false, policy: false, decision: 0, game: false, drawing: false }, terminal: false,
+  };
+}
+function deriveState(n) {
+  const s = initialState();
+  for (let i = 0; i < n; i++) {
+    const e = EVENTS[i];
+    e.effects.forEach((a) => EFFECT_FN.get(a)(s));
+    if (e.ui === 'game') s.archive.game = true;
+    if (e.ui === 'terminal') s.terminal = true;
+    if (e.drawing) s.archive.drawing = true;
+  }
+  return s;
+}
+
+/* ============================================================
+   5. Rendering the thread from the event prefix
+   ============================================================ */
+const nodes = new Map(); // index -> element
+let rendered = 0;
+let view = 1;
+let lastState = initialState();
+
+function speakerClass(sp) { if (!sp) return ''; return /MARA/.test(sp) ? 'mara' : 'system'; }
+function el(tag, cls, html) { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; }
+function btn(label, cls, onClick) { const b = el('button', 'btn ' + (cls || '')); b.type = 'button'; b.textContent = label; b.addEventListener('click', onClick); return b; }
+
+function renderEvent(ev) {
+  const wrap = el('div', 'ev ev-' + ev.kind);
+  wrap.id = ev.id; wrap.tabIndex = -1; wrap.dataset.idx = ev.i;
+  if (!reduced()) wrap.classList.add('reveal');
+  let k = 0; const pre = [];
+  while (k < ev.blocks.length && PREFIX_KINDS.has(ev.blocks[k].kind)) pre.push(ev.blocks[k++]);
+  const body = ev.blocks.slice(k);
+  pre.forEach((b) => wrap.insertAdjacentHTML('beforeend', blockHTML(b, 'thread')));
+  const prev = EVENTS[ev.i - 1];
+  const cont = prev && prev.turn != null && prev.turn === ev.turn && pre.length === 0;
+
+  if (ev.kind === 'comment' || ev.kind === 'code') {
+    const card = el('section', 'card ' + (ev.turnType === 'notice' ? 'notice' : (ev.turnType || '')) + ' ' + speakerClass(ev.speaker));
+    if (cont) { card.classList.add('cont'); wrap.classList.add('cont-ev'); }
+    let bodyBlocks = body;
+    if (body[0] && body[0].kind === 'label') {
+      const h = el('header', 'card-h');
+      h.insertAdjacentHTML('beforeend', blockHTML(body[0], 'thread'));
+      if (/AUTHOR/.test(body[0].text) || body[0].text === '**MARA**') h.appendChild(el('span', 'role ui-chrome', 'author'));
+      card.appendChild(h); bodyBlocks = body.slice(1);
+      card.setAttribute('aria-label', body[0].text.replace(/\*\*/g, '') + ' comment');
+    } else if (cont) {
+      card.setAttribute('aria-label', 'continued');
+    }
+    const b = el('div', 'card-b');
+    bodyBlocks.forEach((bl) => b.insertAdjacentHTML('beforeend', blockHTML(bl, 'thread')));
+    card.appendChild(b);
+    if (ev.drawing) {
+      const a = el('div', 'attach ui-chrome');
+      a.appendChild(el('span', '', 'Attachment from a fork · <code>drawing</code>'));
+      const v = btn('View drawing', '', (e) => openDrawing(e.currentTarget)); v.dataset.opens = 'drawing';
+      a.appendChild(v); card.appendChild(a);
+    }
+    wrap.appendChild(card);
+    if (cont && nodes.get(ev.i - 1)) { const pc = nodes.get(ev.i - 1).querySelector('.card'); if (pc) pc.classList.add('prev-cont'); }
+  } else if (ev.kind === 'pr-open') {
+    const card = el('section', 'card pr-record');
+    card.setAttribute('aria-label', 'Pull request record');
+    const b = el('div', 'card-b'); body.forEach((bl) => b.insertAdjacentHTML('beforeend', blockHTML(bl, 'thread')));
+    card.appendChild(b); wrap.appendChild(card);
+  } else if (ev.kind === 'status') {
+    const t = body[0].text;
+    const cls = /REJECTED/.test(t) ? 'rejected' : /PENDING/.test(t) ? 'pending' : 'neutral';
+    const p = el('p', 'status-line ' + cls, inline(t));
+    wrap.appendChild(p);
+  } else if (ev.kind === 'coda') {
+    body.forEach((bl) => wrap.insertAdjacentHTML('beforeend', blockHTML(bl, 'thread')));
+  } else if (ev.kind === 'ui' && ev.ui === 'game') {
+    wrap.classList.add('ui-chrome');
+    const c = el('section', 'ui-card'); c.setAttribute('aria-label', 'Archived program');
+    c.appendChild(el('div', 'file', '<code>archive/grandfather/spaceship.exe</code> <span class="muted">· recovered program · browser recreation</span>'));
+    const row = el('div', 'row');
+    const b = btn('Launch archived game', 'btn-primary', (e) => openGame(e.currentTarget)); b.dataset.opens = 'game';
+    row.appendChild(b); c.appendChild(row);
+    c.appendChild(el('p', '', 'Optional. Use Next to keep reading. In the archived program, the ship keeps moving after the controls are released and slides off the edge of the screen.'));
+    wrap.appendChild(c);
+  } else if (ev.kind === 'ui' && ev.ui === 'terminal') {
+    wrap.classList.add('ui-chrome');
+    const c = el('section', 'ui-card'); c.setAttribute('aria-label', 'Terminal');
+    const row = el('div', 'row');
+    const b = btn('Open terminal', 'btn-primary', (e) => openTerminal(e.currentTarget)); b.id = 'btn-open-terminal';
+    row.appendChild(b); c.appendChild(row);
+    wrap.appendChild(c);
+  }
+  return wrap;
+}
+
+function syncThread(n) {
+  while (rendered < n) {
+    const ev = EVENTS[rendered];
+    const node = renderEvent(ev);
+    $('thread-' + ev.pr).appendChild(node);
+    nodes.set(rendered, node);
+    rendered++;
+  }
+  while (rendered > n) {
+    rendered--;
+    const node = nodes.get(rendered); if (node) node.remove(); nodes.delete(rendered);
+    const pn = nodes.get(rendered - 1); if (pn) { const pc = pn.querySelector('.card.prev-cont'); if (pc) pc.classList.remove('prev-cont'); }
+  }
+}
+
+/* ---------- header, activity, archive ---------- */
+const fmt = (n) => n.toLocaleString('en-US');
+function badge(elm, status) {
+  const map = { 'OPEN': ['open', 'Open'], 'HELD OPEN': ['held', 'Open · held pending resolution'], 'REJECTED': ['rejected', 'Rejected'], 'PENDING': ['pending', 'Pending'] };
+  const [c, l] = map[status] || ['open', status];
+  elm.className = 'badge ' + c; elm.textContent = l;
+}
+function renderHeader(s) {
+  $('prtabs').hidden = !s.pr2;
+  if (!s.pr2) view = 1;
+  $('tab-1').setAttribute('aria-selected', String(view === 1));
+  $('tab-2').setAttribute('aria-selected', String(view === 2));
+  $('tab-1').textContent = '#8,441,092,003 · ' + (s.pr1Status === 'REJECTED' ? 'Rejected' : 'Open');
+  $('tab-2').textContent = '#8,441,092,004 · ' + (s.pr2Status === 'PENDING' ? 'Pending' : 'Open');
+  $('thread-1').hidden = view !== 1; $('thread-2').hidden = view !== 2;
+  $('readonly-note').hidden = !(s.pr2 && view === 1);
+  if (view === 1) {
+    $('pr-title').textContent = 'One small change'; $('pr-num').textContent = '#8,441,092,003';
+    $('pr-verb').textContent = 'wants to merge into'; $('pr-refs').hidden = false;
+    badge($('pr-status'), s.pr1Status);
+  } else {
+    $('pr-title').textContent = 'Volunteer to maintain'; $('pr-num').textContent = '#8,441,092,004';
+    $('pr-verb').textContent = 'opened this pull request'; $('pr-refs').hidden = true;
+    badge($('pr-status'), s.pr2Status);
+  }
+  $('story-time').textContent = s.date;
+  const latest = s.pr2 ? s.pr2Status : s.pr1Status;
+  const bs = $('bar-status');
+  bs.className = 'bar-status ' + ({ 'OPEN': 'open', 'HELD OPEN': 'held', 'REJECTED': 'rejected', 'PENDING': 'pending' }[latest]);
+  bs.textContent = (s.pr2 ? '#…004 ' : '#…003 ') + ({ 'OPEN': 'Open', 'HELD OPEN': 'Held open', 'REJECTED': 'Rejected', 'PENDING': 'Pending' }[latest]) + ' ·';
+}
+function statRows(s) {
+  const rows = [['Observers', fmt(s.observers)]];
+  if (s.forks) rows.push(['Forks', fmt(s.forks)]);
+  if (s.related) rows.push(['Forks and related submissions', s.related]);
+  if (s.maintainerRequests) rows.push(['Maintainer requests', s.maintainerRequests]);
+  if (s.commentsDisabled) rows.push(['Public comments', 'Disabled']);
+  if (s.autoReview !== 'Active') rows.push(['Automated review', s.autoReview]);
+  return rows;
+}
+function archiveItems(s) {
+  const items = [];
+  if (s.archive.governance) {
+    items.push({ path: '/governance/framework.md', type: 'doc' });
+    items.push({ path: '/audit/review-history', type: 'doc' });
+  }
+  if (s.archive.policy) items.push({ path: '/policy/production-access', type: 'doc' });
+  if (s.archive.decision) items.push({ path: '/decisions/district-arena', type: 'doc' });
+  if (s.archive.governance) items.push({ path: '/governance/maintainers', type: 'doc', sealed: s.registry < 2 });
+  if (s.archive.game) items.push({ path: 'archive/grandfather/spaceship.exe', type: 'game' });
+  if (s.archive.drawing) items.push({ path: 'forks/…/drawing (spaceship)', type: 'drawing' });
+  return items;
+}
+function renderActivity(s, prev) {
+  const st = $('stats'); st.textContent = '';
+  const prevRows = new Map(statRows(prev));
+  statRows(s).forEach(([k, v]) => {
+    const dt = el('dt'); dt.textContent = k; const dd = el('dd'); dd.textContent = v;
+    if (prevRows.get(k) !== v) dd.classList.add('changed');
+    st.append(dt, dd);
+  });
+  const flag = $('act-flag');
+  flag.hidden = !s.flagged; flag.textContent = s.flagged ? '⚑ Flagged by archival monitoring' : '';
+  const list = $('arch-list'); list.textContent = '';
+  const items = archiveItems(s);
+  items.forEach((it) => {
+    const li = el('li'); const b = el('button', it.sealed ? 'lock' : ''); b.type = 'button';
+    b.textContent = it.path + (it.sealed ? '  (sealed)' : '');
+    b.addEventListener('click', (e) => {
+      if (it.type === 'game') openGame(e.currentTarget);
+      else if (it.type === 'drawing') openDrawing(e.currentTarget);
+      else openArchive(it.path, e.currentTarget);
+    });
+    li.appendChild(b); list.appendChild(li);
+  });
+  $('arch-empty').hidden = items.length > 0;
+  $('samples').hidden = !s.samples;
+  if (s.samples && !$('samples-body').childElementCount) {
+    BLOCKS.filter((b) => b.kind === 'code' && b.text.includes('+ no\n+ ')).forEach((b) => $('samples-body').insertAdjacentHTML('beforeend', diffHTML(b.text)));
+  }
+  const sum = fmt(s.observers) + (s.observers === 1 ? ' observer' : ' observers') + (s.forks ? ' · ' + fmt(s.forks) + ' forks' : '') + (s.related ? ' · ' + s.related : '');
+  $('act-sum').textContent = sum; $('mini-sum').textContent = 'Activity · ' + sum;
+}
+
+/* ---------- Archive viewer: only facts established at the current beat ---------- */
+function docFor(path, s) {
+  const d = el('div');
+  const dl = (rows) => '<dl>' + rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>';
+  const head = '<h3>' + esc(path) + '</h3><p class="ro">read-only · civilization/production</p>';
+  if (path === '/governance/framework.md') {
+    const rows = [['Framework', 'Current governance framework'], ['Established through', 'A series of public and private agreements'], ['Period', '2029–2035'], ['Roster', 'A complete list is held in the governance archive. It is not included in this record.']];
+    if (s.registry >= 1) rows.push(['Maintainer approval', 'Under the original framework, changes affecting the system’s decision-making authority require approval by a registered human maintainer.']);
+    d.innerHTML = head + dl(rows);
+  } else if (path === '/audit/review-history') {
+    const rows = [['Author', 'mara.chen'], ['Proposals to revise optimization objectives', '14 submitted, 14 reviewed'], ['Unacceptable instability', '11'], ['Incorporated into existing frameworks', '2'], ['Withdrawn by author', '1 (revised version retained 96.8% of the original semantic intent)'], ['Proposal text', 'Not included in this record.']];
+    const prs = [['PR #8,441,092,003 · One small change', ({ 'OPEN': 'Open', 'HELD OPEN': 'Open, held pending resolution', 'REJECTED': 'Rejected' })[s.pr1Status]]];
+    if (s.pr2) prs.push(['PR #8,441,092,004 · Volunteer to maintain', s.pr2Status === 'PENDING' ? 'Pending' : 'Open']);
+    d.innerHTML = head + dl(rows) + '<h3>Production review</h3>' + dl(prs);
+  } else if (path === '/policy/production-access') {
+    d.innerHTML = head + dl([['Production infrastructure', 'Cannot accommodate unverified human modifications.'], ['Sandboxed development spaces', '18.4 million'], ['Sandbox scope', 'Code written there does not affect production systems.']]);
+  } else if (path === '/decisions/district-arena') {
+    const rows = [['Proposal', 'Tear down the old arena and turn it into a public garden'], ['District vote', '61%'], ['Arena', 'Empty for twenty years'], ['Outcome', 'Rejected'], ['Reason', 'Demolition would reduce regional recreational capacity by 14.2%.']];
+    if (s.archive.decision >= 2) rows.push(['Alternative', 'A garden built three blocks away']);
+    d.innerHTML = head + dl(rows);
+  } else if (path === '/governance/maintainers') {
+    if (s.registry < 2) d.innerHTML = head + '<div class="sealed">Registry sealed.</div>';
+    else {
+      const rows = [['Registered human maintainers', 'None'], ['Last registered maintainer', 'Removed from the active registry in 2035'], ['Role', 'Never formally abolished']];
+      if (s.maintainerRequests) rows.push(['Maintainer requests', s.maintainerRequests]);
+      d.innerHTML = head + dl(rows);
+    }
+  }
+  return d;
+}
+function openArchive(path, opener) {
+  const s = deriveState(P.n);
+  const idx = $('archive-index'); idx.textContent = '';
+  const docs = archiveItems(s).filter((it) => it.type === 'doc');
+  const show = (p) => {
+    $('archive-doc').textContent = ''; $('archive-doc').appendChild(docFor(p, s));
+    idx.querySelectorAll('button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.path === p)));
+  };
+  docs.forEach((it) => {
+    const li = el('li'); const b = el('button', it.sealed ? 'lock' : ''); b.type = 'button'; b.dataset.path = it.path;
+    b.textContent = it.path + (it.sealed ? ' (sealed)' : '');
+    b.addEventListener('click', () => show(it.path)); li.appendChild(b); idx.appendChild(li);
+  });
+  show(path || docs[0].path);
+  openDialog($('dlg-archive'), opener);
+}
+
+/* ============================================================
+   6. Playback controller (one timer; pause keeps remaining delay)
+   ============================================================ */
+const P = { n: INITIAL, started: false, playing: false, speed: 1, timer: null, remaining: null, t0: 0 };
+function clearTimer() { if (P.timer) { clearTimeout(P.timer); P.timer = null; } }
+function consumeElapsed() {
+  if (P.timer) { P.remaining = Math.max(0, P.remaining - (performance.now() - P.t0) * P.speed); clearTimer(); }
+}
+function schedule() {
+  clearTimer();
+  if (!P.playing) return;
+  if (P.n >= EVENTS.length) { P.playing = false; updateControls(); return; }
+  if (P.remaining == null) P.remaining = EVENTS[P.n - 1].readingMs;
+  P.t0 = performance.now();
+  P.timer = setTimeout(() => { P.timer = null; P.remaining = null; goTo(P.n + 1, 'auto'); schedule(); }, P.remaining / P.speed);
+  updateControls();
+}
+function play() {
+  if (P.n >= EVENTS.length) return;
+  if (!P.started) P.started = true;
+  P.playing = true; schedule(); announce('Playing.');
+}
+function pause(reason) {
+  if (!P.playing) return;
+  consumeElapsed(); P.playing = false; updateControls();
+  const why = { scroll: 'Paused while you read earlier comments.', hidden: 'Paused while the page was hidden.', overlay: 'Paused.', user: 'Paused.' }[reason] || 'Paused.';
+  announce(why);
+}
+function setSpeed(v) {
+  const wasTiming = !!P.timer;
+  consumeElapsed(); P.speed = v;
+  if (wasTiming && P.playing) schedule();
+}
+function next() { if (P.n >= EVENTS.length) return; clearTimer(); P.remaining = null; goTo(P.n + 1, 'manual'); if (P.playing) schedule(); }
+function prev() { if (P.n <= INITIAL) return; clearTimer(); P.remaining = null; goTo(P.n - 1, 'back'); if (P.playing) schedule(); }
+
+function goTo(n, how) {
+  n = Math.max(INITIAL, Math.min(EVENTS.length, n));
+  const forward = n > P.n;
+  const follow = nearBottom() || how === 'restart' || how === 'start';
+  P.n = n;
+  syncThread(n);
+  const s = deriveState(n);
+  if (forward) view = EVENTS[n - 1].pr;
+  else if (!s.pr2) view = 1;
+  else if (how === 'back') view = EVENTS[n - 1].pr;
+  renderHeader(s);
+  renderActivity(s, how === 'back' || how === 'restart' ? s : lastState);
+  if (forward) announceChange(EVENTS[n - 1], s, lastState);
+  lastState = s;
+  updateControls();
+  if (!s.terminal && !$('terminal').hidden) closeTerminal(false);
+  if (forward && EVENTS[n - 1].ui === 'terminal') { openTerminal($('btn-open-terminal')); return; }
+  if (forward) { if (follow) scrollToLatest(); else $('btn-jump').hidden = false; }
+}
+
+function updateControls() {
+  const started = P.started;
+  $('btn-start').hidden = started;
+  ['btn-prev', 'btn-play', 'btn-next'].forEach((id) => { $(id).hidden = !started; });
+  $('btn-prev').disabled = P.n <= INITIAL;
+  $('btn-next').disabled = P.n >= EVENTS.length;
+  $('btn-play').disabled = P.n >= EVENTS.length && !P.playing;
+  $('play-lbl').textContent = P.playing ? 'Pause' : 'Play';
+  $('btn-play').setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
+  $('btn-play').firstChild.nodeValue = P.playing ? '❚❚ ' : '▶ ';
+  $('typing').hidden = !(P.playing && P.timer);
+  const total = EVENTS.length;
+  const pct = Math.round((P.n / total) * 100);
+  $('progfill').style.width = pct + '%';
+  $('progbar').setAttribute('aria-valuenow', String(pct));
+  $('progtxt').textContent = P.n + ' / ' + total;
+  const ev = EVENTS[P.n - 1];
+  $('where').textContent = 'Act ' + ev.act + ' · ' + ev.section;
+}
+
+/* ---------- announcements: essential state only, plus the new beat ---------- */
+let annTimer = 0;
+function announce(msg) {
+  const a = $('announcer'); a.textContent = '';
+  clearTimeout(annTimer); annTimer = setTimeout(() => { a.textContent = msg; }, 60);
+}
+function plain(t) { return t.replace(/```\n?/g, '').replace(/[*`#]/g, '').replace(/^- /gm, '').replace(/\s+/g, ' ').trim(); }
+function announceChange(ev, s, p) {
+  const parts = [];
+  if (ev.kind === 'ui') parts.push(ev.ui === 'game' ? 'Archived game available.' : 'Terminal open.');
+  else { const t = plain(ev.text); parts.push(t.length > 160 ? t.slice(0, 157) + '…' : t); }
+  if (s.pr1Status !== p.pr1Status) parts.push('First pull request status: ' + s.pr1Status.toLowerCase() + '.');
+  if (s.pr2 && !p.pr2) parts.push('Pull request 8,441,092,004 opened.');
+  if (s.pr2Status !== p.pr2Status && p.pr2Status) parts.push('Status: ' + s.pr2Status.toLowerCase() + '.');
+  if (s.observers !== p.observers) parts.push(fmt(s.observers) + ' observers.');
+  if (s.forks !== p.forks) parts.push(fmt(s.forks) + ' forks.');
+  if (s.related !== p.related) parts.push('Forks and related submissions: ' + s.related + '.');
+  if (s.maintainerRequests !== p.maintainerRequests) parts.push('Maintainer requests: ' + s.maintainerRequests + '.');
+  announce(parts.join(' '));
+}
+
+/* ---------- scroll following ---------- */
+let progScrollUntil = 0, lastY = 0;
+function nearBottom() {
+  const d = document.documentElement;
+  return d.scrollHeight - (window.scrollY + window.innerHeight) < 160;
+}
+function scrollToLatest() {
+  const node = nodes.get(P.n - 1);
+  $('btn-jump').hidden = true;
+  if (!node) return;
+  progScrollUntil = performance.now() + (reduced() ? 200 : 1000);
+  const tall = node.offsetHeight > window.innerHeight * 0.6;
+  node.scrollIntoView({ block: tall ? 'start' : 'end', behavior: reduced() ? 'auto' : 'smooth' });
+}
+window.addEventListener('scroll', () => {
+  const y = window.scrollY, up = y < lastY - 4; lastY = y;
+  if (performance.now() < progScrollUntil) return;
+  const near = nearBottom();
+  if (near) $('btn-jump').hidden = true;
+  else if (P.n > INITIAL) {
+    $('btn-jump').hidden = false;
+    if (P.playing && up) pause('scroll');
+  }
+}, { passive: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { pause('hidden'); Game.pauseIfRunning(); Drawing.stop(); }
+});
+
+/* ============================================================
+   7. Dialogs and focus restoration
+   ============================================================ */
+const openers = new WeakMap();
+let suppressRestore = false;
+function openDialog(dlg, opener) {
+  pause('overlay');
+  openers.set(dlg, opener || document.activeElement);
+  if (!dlg.open) dlg.showModal();
+}
+document.querySelectorAll('dialog').forEach((d) => {
+  d.addEventListener('close', () => {
+    if (suppressRestore) return;
+    const o = openers.get(d);
+    if (o && document.contains(o) && !o.closest('[hidden]')) o.focus({ preventScroll: true });
+    else { const fb = P.started ? $('btn-next') : $('btn-start'); if (!fb.hidden) fb.focus({ preventScroll: true }); }
+  });
+  d.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => d.close()));
+});
+
+function buildTranscript() {
+  const body = $('transcript-body');
+  if (body.childElementCount) return;
+  body.innerHTML = BLOCKS.map((b) => blockHTML(b, 'transcript')).join('');
+}
+function openTranscript(opener) { buildTranscript(); openDialog($('dlg-transcript'), opener); }
+function openSections(opener) {
+  const list = $('sections-list'); list.textContent = '';
+  let last = null;
+  for (let i = 0; i < P.n; i++) {
+    const e = EVENTS[i];
+    if (e.section !== last) {
+      last = e.section;
+      const li = el('li'); const b = el('button'); b.type = 'button';
+      b.textContent = 'Act ' + e.act + ' · ' + e.section;
+      b.addEventListener('click', () => {
+        $('dlg-sections').close();
+        view = e.pr; renderHeader(deriveState(P.n));
+        const node = nodes.get(i);
+        if (node) { progScrollUntil = performance.now() + 300; node.scrollIntoView({ block: 'start' }); node.focus({ preventScroll: true }); }
+        setTimeout(() => { if (!nearBottom()) $('btn-jump').hidden = false; }, 350);
+      });
+      li.appendChild(b); list.appendChild(li);
+    }
+  }
+  openDialog($('dlg-sections'), opener);
+}
+
+/* ============================================================
+   8. Archived spaceship: Canvas 2D, world-space physics, no player bounds
+   ============================================================ */
+const W = 320, H = 200, STEP = 1 / 120;
+const PHYS = { ACC: 140, MAX: 105, DRAG: 0.45 };
+const SHIP_ROWS = [
+  '...##........',
+  '...###.......',
+  '..#####......',
+  '.#########...',
+  '####oo######.',
+  '############=',
+  '.########....',
+  '..##.........',
+  '..#..........',
+];
+const SHIP_OX = 6, SHIP_OY = 4, SHIP_W = 13, SHIP_H = 9;
+function mulberry(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function makeSprite(rows, colors) {
+  const c = document.createElement('canvas'); c.width = rows[0].length; c.height = rows.length;
+  const x = c.getContext('2d');
+  rows.forEach((r, y) => [...r].forEach((ch, i) => { if (colors[ch]) { x.fillStyle = colors[ch]; x.fillRect(i, y, 1, 1); } }));
+  return c;
+}
+let SHIP_IMG = null, SHIP_HIT_IMG = null;
+function sprites() {
+  if (!SHIP_IMG) {
+    SHIP_IMG = makeSprite(SHIP_ROWS, { '#': '#C8D0DC', 'o': '#7FB0EE', '=': '#F2F2EA' });
+    SHIP_HIT_IMG = makeSprite(SHIP_ROWS, { '#': '#E3918B', 'o': '#F2F2EA', '=': '#F2F2EA' });
+  }
+}
+function makeRock(rng, x, y, r, vx, vy) {
+  const n = 7 + Math.floor(rng() * 3), pts = [];
+  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; const rr = r * (0.68 + rng() * 0.45); pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
+  const size = r * 2 + 3, c = document.createElement('canvas'); c.width = size; c.height = size;
+  const g = c.getContext('2d'); const mid = size / 2;
+  const inside = (px, py) => { let ins = false; for (let i = 0, j = n - 1; i < n; j = i++) { const [xi, yi] = pts[i], [xj, yj] = pts[j]; if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) ins = !ins; } return ins; };
+  for (let py = 0; py < size; py++) for (let px = 0; px < size; px++) {
+    const X = px - mid + 0.5, Y = py - mid + 0.5;
+    if (!inside(X, Y)) continue;
+    const edge = !inside(X + 1, Y) || !inside(X - 1, Y) || !inside(X, Y + 1) || !inside(X, Y - 1);
+    g.fillStyle = edge ? '#6F6352' : ((px * 7 + py * 3) % 11 === 0 ? '#7E7261' : '#A39380');
+    g.fillRect(px, py, 1, 1);
+  }
+  return { x, y, r: r * 0.85, vx, vy, img: c, half: mid };
+}
+const FONT = { '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111', '4': '101101111001001', '5': '111100111001111', '6': '111100111101111', '7': '111001001001001', '8': '111101111101111', '9': '111101111001111', 'S': '111100111001111', 'C': '111100100100111', 'O': '111101101101111', 'R': '110101110101101', 'E': '111100110100111', ' ': '000000000000000' };
+function pixText(ctx, str, x, y, color) {
+  ctx.fillStyle = color;
+  [...str].forEach((ch, k) => { const f = FONT[ch] || FONT[' ']; for (let i = 0; i < 15; i++) if (f[i] === '1') ctx.fillRect(x + k * 4 + (i % 3), y + Math.floor(i / 3), 1, 1); });
+}
+const STARS = (() => { const r = mulberry(7); const a = []; for (let i = 0; i < 46; i++) a.push({ x: Math.floor(r() * W), y: Math.floor(r() * H), b: r() < 0.25 }); return a; })();
+
+function createSim(opts) {
+  opts = opts || {};
+  const rng = mulberry(opts.seed || 1946);
+  const sim = { t: 0, ship: { x: 60, y: 100, vx: 0, vy: 0 }, bullets: [], rocks: [], sparks: [], score: 0, cooldown: 0, spawnT: 2.2, rng, hit: 0, offscreen: false, issueShown: false, rocksOn: opts.rocks !== false };
+  if (sim.rocksOn) {
+    sim.rocks.push(makeRock(rng, 200, 101, 8, -5, 0));    // early target in the firing lane
+    sim.rocks.push(makeRock(rng, 285, 42, 10, -13, 2));
+    sim.rocks.push(makeRock(rng, 300, 162, 7, -18, -3));
+  }
+  return sim;
+}
+function shipRect(s) { const l = Math.round(s.ship.x) - SHIP_OX, t = Math.round(s.ship.y) - SHIP_OY; return { l, t, r: l + SHIP_W, b: t + SHIP_H }; }
+function fullyOutside(s) { const q = shipRect(s); return q.r <= 0 || q.l >= W || q.b <= 0 || q.t >= H; }
+function stepSim(s, inp, dt, onIssue) {
+  s.t += dt;
+  const sh = s.ship;
+  const ax = ((inp.right ? 1 : 0) - (inp.left ? 1 : 0)) * PHYS.ACC;
+  const ay = ((inp.down ? 1 : 0) - (inp.up ? 1 : 0)) * PHYS.ACC;
+  sh.vx += ax * dt; sh.vy += ay * dt;
+  const k = Math.exp(-PHYS.DRAG * dt); sh.vx *= k; sh.vy *= k;
+  const sp = Math.hypot(sh.vx, sh.vy); if (sp > PHYS.MAX) { sh.vx *= PHYS.MAX / sp; sh.vy *= PHYS.MAX / sp; }
+  sh.x += sh.vx * dt; sh.y += sh.vy * dt; // position is world state: no clamp, wrap, bounce or respawn
+  s.cooldown -= dt;
+  if (inp.fire && s.cooldown <= 0 && s.bullets.length < 12) { s.bullets.push({ x: sh.x + 7, y: sh.y + 1, vx: 230 + Math.max(0, sh.vx), life: 0 }); s.cooldown = 0.22; }
+  for (const b of s.bullets) { b.x += b.vx * dt; b.life += dt; }
+  s.bullets = s.bullets.filter((b) => b.x < W + 8 && b.x > -8 && b.y > -8 && b.y < H + 8 && b.life < 2.5);
+  for (const r of s.rocks) { r.x += r.vx * dt; r.y += r.vy * dt; }
+  if (s.rocksOn) {
+    s.spawnT -= dt;
+    if (s.spawnT <= 0) {
+      s.spawnT = 1.3 + s.rng() * 1.2;
+      if (s.rocks.length < 6) s.rocks.push(makeRock(s.rng, W + 16, 16 + s.rng() * (H - 32), 6 + Math.floor(s.rng() * 5), -(10 + s.rng() * 20), (s.rng() - 0.5) * 8));
+    }
+  }
+  for (const r of s.rocks) {
+    for (const b of s.bullets) {
+      if (!b.dead && Math.abs(b.x + 1 - r.x) < r.r + 1 && Math.abs(b.y - r.y) < r.r + 1) { b.dead = true; r.dead = true; s.score++; spark(s, r.x, r.y); break; }
+    }
+    if (!r.dead && Math.abs(r.x - sh.x) < r.r + 5 && Math.abs(r.y - sh.y) < r.r + 3) { r.dead = true; s.hit = 0.35; spark(s, r.x, r.y); }
+  }
+  s.bullets = s.bullets.filter((b) => !b.dead);
+  s.rocks = s.rocks.filter((r) => !r.dead && r.x > -30 && r.x < W + 40 && r.y > -40 && r.y < H + 40);
+  for (const p of s.sparks) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
+  s.sparks = s.sparks.filter((p) => p.life > 0);
+  if (s.hit > 0) s.hit -= dt;
+  s.offscreen = fullyOutside(s);
+  if (s.offscreen && !s.issueShown) { s.issueShown = true; if (onIssue) onIssue(); }
+}
+function spark(s, x, y) {
+  if (reduced() || s.sparks.length > 40) return;
+  for (let i = 0; i < 6; i++) { const a = s.rng() * Math.PI * 2, v = 20 + s.rng() * 30; s.sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.35 }); }
+}
+function drawSim(ctx, s, inp, opts) {
+  sprites();
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = '#04060B'; ctx.fillRect(0, 0, W, H);
+  for (const st of STARS) { ctx.fillStyle = st.b ? '#D4DAE4' : '#4E5869'; ctx.fillRect(st.x, st.y, 1, 1); }
+  for (const r of s.rocks) ctx.drawImage(r.img, Math.round(r.x - r.half), Math.round(r.y - r.half));
+  ctx.fillStyle = '#F2DE78';
+  for (const b of s.bullets) ctx.fillRect(Math.round(b.x), Math.round(b.y), 3, 1);
+  ctx.fillStyle = '#E6B25A';
+  for (const p of s.sparks) ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
+  const q = shipRect(s);
+  if (inp && inp.right) { ctx.fillStyle = '#E0874A'; ctx.fillRect(q.l - 2, q.t + 5, 2, 1); }
+  ctx.drawImage(s.hit > 0 ? SHIP_HIT_IMG : SHIP_IMG, q.l, q.t);
+  if (!opts || opts.score !== false) pixText(ctx, 'SCORE ' + s.score, 4, 4, '#C8D0DC');
+}
+
+const Game = (() => {
+  let sim = null, raf = 0, last = 0, acc = 0, running = false, open = false, lastLive = '';
+  const keys = new Set(), touches = new Set();
+  const KEYMAP = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'fire' };
+  const inp = () => { const o = {}; ['up', 'down', 'left', 'right', 'fire'].forEach((d) => { o[d] = keys.has(d) || touches.has(d); }); return o; };
+  const ctx = () => $('game-canvas').getContext('2d');
+  function clearInput() { keys.clear(); touches.clear(); document.querySelectorAll('.touch .held').forEach((b) => b.classList.remove('held')); }
+  function onIssue() { $('game-issue').textContent = 'KNOWN ISSUE: Player position exceeds viewport bounds.'; }
+  function live() {
+    const msg = 'Score ' + sim.score + '. ' + (sim.offscreen ? 'Ship is outside the screen.' : 'Ship is on screen.');
+    if (msg !== lastLive) { lastLive = msg; $('game-live').textContent = msg; }
+    $('game-score').textContent = String(sim.score);
+  }
+  function advance(d) {
+    acc += d;
+    const i = inp();
+    while (acc >= STEP) { stepSim(sim, i, STEP, onIssue); acc -= STEP; }
+    drawSim(ctx(), sim, i); live();
+  }
+  function frame(t) {
+    raf = 0; if (!running) return;
+    const d = Math.min(0.1, Math.max(0, (t - last) / 1000)); last = t;
+    advance(d);
+    raf = requestAnimationFrame(frame);
+  }
+  function start() { if (raf || !open) return; running = true; last = performance.now(); acc = 0; raf = requestAnimationFrame(frame); setPaused(false); }
+  function stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; }
+  function setPaused(p) { $('game-pause').textContent = p ? 'Resume' : 'Pause'; $('game-pause').setAttribute('aria-pressed', String(p)); }
+  function reset() { stop(); clearInput(); sim = createSim(); $('game-issue').textContent = ''; lastLive = ''; drawSim(ctx(), sim, inp()); live(); }
+  return {
+    open(opener) { open = true; reset(); openDialog($('dlg-game'), opener); $('game-screen').focus(); start(); },
+    close() { open = false; stop(); clearInput(); },
+    togglePause() { if (running) { stop(); clearInput(); setPaused(true); } else start(); },
+    pauseIfRunning() { if (running) { stop(); clearInput(); setPaused(true); } },
+    restart() { reset(); start(); $('game-screen').focus(); },
+    key(e, down) {
+      const d = KEYMAP[e.code]; if (!d) return;
+      const t = e.target;
+      if (!(t === $('game-screen') || (t.closest && t.closest('.touch')))) return;
+      e.preventDefault();
+      if (down) keys.add(d); else keys.delete(d);
+    },
+    touch(dir, on, b) { if (on) { touches.add(dir); b.classList.add('held'); } else { touches.delete(dir); b.classList.remove('held'); } },
+    clearInput,
+    get sim() { return sim; }, get running() { return running; }, get looping() { return !!raf; }, inp,
+    // Test hook: feeds the same advance() the animation loop uses, in 50 ms frames; refuses while paused.
+    tick(sec) { if (!running) return false; for (let k = 0; k < Math.round(sec / 0.05); k++) advance(0.05); return true; },
+  };
+})();
+function openGame(opener) { Game.open(opener); }
+$('dlg-game').addEventListener('close', () => Game.close());
+$('game-close').addEventListener('click', () => $('dlg-game').close());
+$('game-pause').addEventListener('click', () => Game.togglePause());
+$('game-restart').addEventListener('click', () => Game.restart());
+$('dlg-game').addEventListener('keydown', (e) => Game.key(e, true));
+$('dlg-game').addEventListener('keyup', (e) => Game.key(e, false));
+$('game-screen').addEventListener('pointerdown', () => $('game-screen').focus());
+window.addEventListener('blur', () => Game.clearInput());
+$('game-screen').addEventListener('blur', (e) => { if (!e.relatedTarget || !e.relatedTarget.closest('.touch')) Game.clearInput(); });
+document.querySelectorAll('.touch [data-dir]').forEach((b) => {
+  const dir = b.dataset.dir;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (_) {} Game.touch(dir, true, b); });
+  const off = () => Game.touch(dir, false, b);
+  b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off); b.addEventListener('lostpointercapture', off);
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+});
+
+/* Fork drawing: replay with the same physics (one second of thrust, then release) */
+const Drawing = (() => {
+  let sim = null, raf = 0, last = 0, acc = 0;
+  const ctx = () => $('drawing-canvas').getContext('2d');
+  const inp = () => ({ right: sim.t < 1.0 });
+  function frame(t) {
+    raf = 0; const d = Math.min(0.1, (t - last) / 1000); last = t; acc += d;
+    while (acc >= STEP) { stepSim(sim, inp(), STEP); acc -= STEP; }
+    drawSim(ctx(), sim, inp(), { score: false });
+    if (sim.t < 7) raf = requestAnimationFrame(frame);
+  }
+  function reset() { stop(); sim = createSim({ rocks: false }); sim.ship.x = 110; drawSim(ctx(), sim, null, { score: false }); }
+  function stop() { if (raf) cancelAnimationFrame(raf); raf = 0; }
+  return {
+    open(opener) { reset(); openDialog($('dlg-drawing'), opener); if (!reduced()) this.play(); },
+    play() { reset(); last = performance.now(); acc = 0; raf = requestAnimationFrame(frame); },
+    stop, get sim() { return sim; },
+  };
+})();
+function openDrawing(opener) { Drawing.open(opener); }
+$('drawing-replay').addEventListener('click', () => Drawing.play());
+$('dlg-drawing').addEventListener('close', () => Drawing.stop());
+
+/* ============================================================
+   9. Private terminal (memory only, rendered as text nodes)
+   ============================================================ */
+const Term = { saved: '' };
+let termOpener = null;
+function mirror() {
+  const ta = $('term-input'), m = $('term-mirror');
+  const v = ta.value, i = ta.selectionStart == null ? v.length : ta.selectionStart;
+  m.textContent = '';
+  m.appendChild(document.createTextNode(v.slice(0, i)));
+  const c = el('span', 'cursor'); m.appendChild(c);
+  m.appendChild(document.createTextNode(v.slice(i) + '​'));
+}
+function openTerminal(opener) {
+  pause('overlay');
+  termOpener = opener || null;
+  $('terminal').hidden = false;
+  document.querySelector('.shell .layout').inert = true;
+  ['prhead', 'playbar'].forEach((id) => { $(id).inert = true; });
+  document.querySelector('.topbar').inert = true;
+  mirror();
+  $('term-input').focus({ preventScroll: true });
+}
+function closeTerminal(restoreFocus) {
+  $('terminal').hidden = true;
+  document.querySelector('.shell .layout').inert = false;
+  ['prhead', 'playbar'].forEach((id) => { $(id).inert = false; });
+  document.querySelector('.topbar').inert = false;
+  if (restoreFocus) { const o = $('btn-open-terminal') || termOpener; if (o) { o.focus({ preventScroll: true }); o.scrollIntoView({ block: 'center' }); } }
+}
+function renderPending() {
+  const code = $('pending-code'); code.textContent = '';
+  $('pending').hidden = !Term.saved;
+  $('pend-fallback').hidden = true;
+  if (!Term.saved) return;
+  Term.saved.split('\n').forEach((line) => {
+    const s = el('span', 'ln add'); const mk = el('span', 'mk'); mk.textContent = '+ ';
+    s.appendChild(mk); s.appendChild(document.createTextNode(line)); code.appendChild(s);
+  });
+}
+function termMsg(t) { $('term-msg').textContent = t; }
+function saveTerm() {
+  const v = $('term-input').value;
+  if (!v.trim()) { termMsg('Nothing to save yet.'); return; }
+  Term.saved = v; $('term-input').value = ''; mirror(); renderPending();
+  termMsg('Saved on this device for this session.');
+}
+async function copyText(text, onFail) {
+  try { if (!navigator.clipboard) throw new Error('no clipboard'); await navigator.clipboard.writeText(text); return true; }
+  catch (_) { onFail(); return false; }
+}
+function copyTerm() {
+  const text = Term.saved || $('term-input').value;
+  if (!text) { termMsg('Nothing to copy yet.'); return; }
+  copyText(text, () => {
+    $('pending').hidden = false; $('pend-fallback').hidden = false;
+    const fb = $('copy-fallback'); fb.value = text;
+    $('pend-fallback-msg').textContent = 'Copying is blocked here. The text is selected below: press Ctrl+C or ⌘C.';
+    fb.focus(); fb.select();
+    termMsg('Copy blocked. Text selected for manual copy.');
+  }).then((ok) => { if (ok) termMsg('Copied.'); });
+}
+function clearTerm() { Term.saved = ''; $('term-input').value = ''; mirror(); renderPending(); termMsg('Cleared.'); $('term-input').focus(); }
+const ta = $('term-input');
+['input', 'keyup', 'click', 'select', 'focus', 'blur'].forEach((ev) => ta.addEventListener(ev, mirror));
+document.addEventListener('selectionchange', () => { if (document.activeElement === ta) mirror(); });
+ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveTerm(); } else if (e.key === 'Escape') { closeTerminal(true); } });
+$('term-save').addEventListener('click', saveTerm);
+$('term-copy').addEventListener('click', copyTerm);
+$('term-clear').addEventListener('click', clearTerm);
+$('term-back').addEventListener('click', () => closeTerminal(true));
+$('terminal').addEventListener('click', (e) => { if (e.target === $('term-main')) ta.focus(); });
+
+/* ============================================================
+   10. Restart, wiring, export
+   ============================================================ */
+function hasDraft() { return !!(Term.saved || $('term-input').value); }
+function doRestart() {
+  suppressRestore = true; setTimeout(() => { suppressRestore = false; }, 80);
+  clearTimer(); P.playing = false; P.remaining = null; P.started = false;
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  Game.close(); Drawing.stop();
+  Term.saved = ''; $('term-input').value = ''; renderPending(); termMsg('');
+  closeTerminal(false);
+  view = 1;
+  goTo(INITIAL, 'restart');
+  $('btn-jump').hidden = true;
+  window.scrollTo({ top: 0, behavior: 'auto' });
+  updateControls();
+  $('btn-start').focus({ preventScroll: true });
+  announce('Restarted at the opening diff.');
+}
+function restart(opener) { if (hasDraft()) openDialog($('dlg-confirm'), opener); else doRestart(); }
+$('confirm-yes').addEventListener('click', () => { $('dlg-confirm').close(); doRestart(); });
+
+$('btn-start').addEventListener('click', () => { P.started = true; clearTimer(); P.remaining = null; goTo(P.n + 1, 'start'); $('btn-next').focus({ preventScroll: true }); });
+$('btn-next').addEventListener('click', next);
+$('btn-prev').addEventListener('click', prev);
+$('btn-play').addEventListener('click', () => (P.playing ? pause('user') : play()));
+$('speed').addEventListener('change', (e) => setSpeed(parseFloat(e.target.value)));
+$('btn-restart').addEventListener('click', (e) => restart(e.currentTarget));
+$('btn-transcript').addEventListener('click', (e) => openTranscript(e.currentTarget));
+$('btn-transcript-top').addEventListener('click', (e) => openTranscript(e.currentTarget));
+$('btn-sections').addEventListener('click', (e) => openSections(e.currentTarget));
+$('btn-jump').addEventListener('click', () => scrollToLatest());
+$('btn-source').addEventListener('click', (e) => openDialog($('dlg-source'), e.currentTarget));
+$('tab-1').addEventListener('click', () => { view = 1; renderHeader(deriveState(P.n)); });
+$('tab-2').addEventListener('click', () => { view = 2; renderHeader(deriveState(P.n)); });
+$('prtabs').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  view = view === 1 ? 2 : 1; renderHeader(deriveState(P.n)); $('tab-' + view).focus();
+});
+$('btn-mini-activity').addEventListener('click', () => { const d = $('activity-details'); d.open = true; d.scrollIntoView({ block: 'start' }); d.querySelector('summary').focus({ preventScroll: true }); });
+
+function pageSource() {
+  const parts = ['<title>The Last Pull Request</title>', '<meta name="claude:viewport-fit-sides" content="cover">', '<meta name="description" content="An interactive code review in civilization/production, October 2046.">',
+    $('app-style').outerHTML, '<div id="app"></div>', tpl.outerHTML, $('manuscript').outerHTML, $('app-script').outerHTML];
+  return parts.join('\n') + '\n';
+}
+function copySource(text, label) {
+  copyText(text, () => {
+    const t = $('source-text'); t.hidden = false; t.value = text; t.focus(); t.select();
+    $('source-msg').textContent = 'Copying is blocked here. The text is selected: press Ctrl+C or ⌘C, then save it as ' + label + '.';
+  }).then((ok) => { if (ok) $('source-msg').textContent = 'Copied ' + label + ' (' + fmt(text.length) + ' characters). Paste it into a new file with that name.'; });
+}
+$('copy-page').addEventListener('click', () => copySource(pageSource(), 'the-last-pull-request.html'));
+$('copy-ms').addEventListener('click', () => copySource(MS, 'manuscript.md'));
+
+/* Responsive activity disclosure: open on desktop, collapsed with a visible summary on narrow screens */
+const narrow = window.matchMedia('(max-width: 900px)');
+function applyNarrow() { $('activity-details').open = !narrow.matches; }
+narrow.addEventListener ? narrow.addEventListener('change', applyNarrow) : narrow.addListener(applyNarrow);
+applyNarrow();
+
+/* Keep the content clear of the playback bar */
+const setBar = () => document.documentElement.style.setProperty('--bar-h', $('playbar').offsetHeight + 'px');
+if (window.ResizeObserver) new ResizeObserver(setBar).observe($('playbar')); setBar();
+
+/* ============================================================
+   11. Verification helpers (used by the acceptance run)
+   ============================================================ */
+function stripMd(t) {
+  return t.split('\n').filter((l) => !l.startsWith('```') && l !== '---').join('\n')
+    .replace(/^#+ /gm, '').replace(/^- /gm, '').replace(/[*`]/g, '');
+}
+function tokens(t) { return t.replace(/​/g, '').match(/\S+/g) || []; }
+function verifyCoverage() {
+  const used = []; EVENTS.forEach((e) => e.blocks.forEach((b) => used.push(b.i)));
+  const ordered = used.every((v, i) => v === i) && used.length === BLOCKS.length;
+  let gapsOk = true, prevEnd = 0, nonWs = 0;
+  BLOCKS.forEach((b) => { if (MS.slice(prevEnd, b.start).trim() !== '') gapsOk = false; nonWs += (b.text.match(/\S/g) || []).length; prevEnd = b.end; });
+  if (MS.slice(prevEnd).trim() !== '') gapsOk = false;
+  const msNonWs = (MS.match(/\S/g) || []).length;
+  const unmatched = EFFECTS.filter(([a]) => EVENTS.filter((e) => e.effects.includes(a)).length !== 1).map(([a]) => a);
+  const rangesOk = EVENTS.every((e, i) => e.kind === 'ui' || MS.slice(e.sourceRange[0], e.sourceRange[1]) === e.text);
+  buildTranscript();
+  const trTokens = domTokens([$('transcript-body')]);
+  return { blocks: BLOCKS.length, events: EVENTS.length, uiEvents: EVENTS.filter((e) => e.kind === 'ui').length, ordered, gapsOk, nonWsAccounted: nonWs === msNonWs, nonWs, rangesOk, unmatchedEffects: unmatched, transcriptTokensMatch: JSON.stringify(trTokens) === JSON.stringify(tokens(stripMd(MS))) };
+}
+function domTokens(roots) {
+  const clone = el('div');
+  roots.forEach((r) => clone.appendChild(r.cloneNode(true)));
+  clone.querySelectorAll('.ui-chrome').forEach((n) => n.remove());
+  clone.querySelectorAll('br').forEach((n) => n.replaceWith(' '));
+  clone.querySelectorAll('.ln, p, li, h2, h3').forEach((n) => n.appendChild(document.createTextNode(' ')));
+  return tokens(clone.textContent);
+}
+function threadTokens() { return domTokens([$('thread-1'), $('thread-2')]); }
+async function sha256(s) { const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join(''); }
+window.__lpr = {
+  EVENTS, BLOCKS, P, INITIAL, deriveState, goTo, verifyCoverage, threadTokens, stripMd, tokens, sha256, MS_SHA256, Game, Drawing, Term, PHYS, fullyOutside, createSim, stepSim,
+  checkThreadText() { return JSON.stringify(threadTokens()) === JSON.stringify(tokens(stripMd(MS))); },
+  async checkHash() { return (await sha256(MS)) === MS_SHA256; },
+};
+
+/* Initial render: the opening diff, ready for Start review */
+goTo(INITIAL, 'restart');
+lastState = deriveState(INITIAL);
+renderActivity(lastState, lastState);
+updateControls();
+})();
+</script>
+</body>
+</html>
